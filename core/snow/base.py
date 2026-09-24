@@ -13,7 +13,7 @@ Improvements over the clients in the existing project:
 """
 
 import datetime
-from typing import Any, Dict, Iterator, List, Optional
+from typing import Any, Dict, Iterator, List, Optional, Tuple
 
 import requests
 from requests.adapters import HTTPAdapter
@@ -51,6 +51,8 @@ class ServiceNowClient:
         self.timeout = int(settings.get('servicenow.timeout_seconds', 60))
         self.page_size = int(settings.get('servicenow.page_size', 200))
         self.verify_tls = bool(settings.get('servicenow.verify_tls', True))
+        # Backstop against a runaway pagination loop, not a tuning knob.
+        self.max_offset = int(settings.get('servicenow.max_offset', 200000))
 
         # Required: a missing key here would otherwise surface as an obscure
         # Vault error rather than a configuration one.
@@ -82,8 +84,14 @@ class ServiceNowClient:
 
     # -- core request ------------------------------------------------------
 
-    def get(self, table: str, params: Dict[str, Any]) -> List[Dict[str, Any]]:
-        """Single page GET against /api/now/table/<table>."""
+    def _fetch_page(self, table: str,
+                    params: Dict[str, Any]) -> Tuple[List[Dict[str, Any]], Optional[int]]:
+        """One GET. Returns (rows, total_matching) - total is None if absent.
+
+        X-Total-Count is how many records the QUERY matches, counted before
+        read ACLs are applied, so it is the right thing to page against even
+        though fewer rows come back.
+        """
         url = f'{self.base_url}/api/now/table/{table}'
         try:
             response = self.session.get(
@@ -98,46 +106,93 @@ class ServiceNowClient:
             )
 
         try:
-            return response.json().get('result', [])
+            rows = response.json().get('result', [])
         except ValueError as exc:
             raise ServiceNowError(f'{table}: non-JSON response - {exc}') from exc
+
+        total: Optional[int] = None
+        raw_total = response.headers.get('X-Total-Count')
+        if raw_total is not None:
+            try:
+                total = int(raw_total)
+            except (TypeError, ValueError):
+                total = None
+
+        return rows, total
+
+    def get(self, table: str, params: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Single page GET against /api/now/table/<table>."""
+        return self._fetch_page(table, params)[0]
+
+    def _pages(self, table: str, params: Dict[str, Any]) -> Iterator[List[Dict[str, Any]]]:
+        """Walk the full result window, one page at a time.
+
+        Deliberately does NOT stop on a short page. ServiceNow applies the
+        limit/offset window at the database level and filters by read ACL
+        afterwards, so a page can come back partly - or entirely - empty while
+        thousands of records remain behind it. kb_knowledge is the worst case,
+        because knowledge base access is governed by user criteria.
+
+        Stopping on a short page silently truncated the KB index to a single
+        page. The offset therefore advances by the requested page size, not by
+        the number of rows received, and the loop ends on the record count
+        rather than on the row count.
+        """
+        offset = 0
+        total: Optional[int] = None
+        seen = 0
+
+        while True:
+            page_params = dict(params)
+            page_params['sysparm_limit'] = self.page_size
+            page_params['sysparm_offset'] = offset
+
+            page, page_total = self._fetch_page(table, page_params)
+            if page_total is not None:
+                total = page_total
+            seen += len(page)
+
+            if page:
+                yield page
+
+            offset += self.page_size
+
+            if total is not None:
+                if offset >= total:
+                    break
+            elif not page:
+                # No count header to go on; an empty page is the only safe
+                # stopping condition left.
+                break
+
+            if offset >= self.max_offset:
+                log.warning('%s: stopped at the %d-record safety cap with %d collected; '
+                            'raise servicenow.max_offset if the query is meant to be '
+                            'this large', table, self.max_offset, seen)
+                break
+
+        if total is not None and seen < total:
+            # Not an error - this is what read ACLs look like - but the gap is
+            # worth stating, because it is invisible in the returned data.
+            log.info('%s: query matched %d records, %d readable by %s',
+                     table, total, seen, self.username)
 
     def get_all(self, table: str, params: Dict[str, Any],
                 max_records: Optional[int] = None) -> List[Dict[str, Any]]:
         """Paginated GET. Stops at max_records if supplied."""
         collected: List[Dict[str, Any]] = []
-        offset = 0
 
-        while True:
-            page_params = dict(params)
-            page_params['sysparm_limit'] = self.page_size
-            page_params['sysparm_offset'] = offset
-
-            page = self.get(table, page_params)
+        for page in self._pages(table, params):
             collected.extend(page)
-
-            if len(page) < self.page_size:
-                break
             if max_records is not None and len(collected) >= max_records:
-                collected = collected[:max_records]
-                break
-
-            offset += self.page_size
+                return collected[:max_records]
 
         return collected
 
     def iter_all(self, table: str, params: Dict[str, Any]) -> Iterator[Dict[str, Any]]:
-        offset = 0
-        while True:
-            page_params = dict(params)
-            page_params['sysparm_limit'] = self.page_size
-            page_params['sysparm_offset'] = offset
-            page = self.get(table, page_params)
+        for page in self._pages(table, params):
             for row in page:
                 yield row
-            if len(page) < self.page_size:
-                return
-            offset += self.page_size
 
     # -- helpers -----------------------------------------------------------
 

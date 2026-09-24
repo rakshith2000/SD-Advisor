@@ -1639,6 +1639,36 @@ g.p('Then confirm the service can load the index into memory:')
 g.code("""python run.py doctor | grep 'vector index'
 # PASS  vector index   9187 incidents, 412 KB articles""")
 
+g.h3('14.5 Check the KB count against ServiceNow')
+g.p('Do this explicitly. kb_indexed is a plausible-looking number whatever it is, and the '
+    'only way to know it is right is to compare it with the published total. Note that '
+    'kb_indexed is NOT affected by --days: the KB is always fetched in full, and the window '
+    'applies only to resolved incidents.')
+g.code("""python3 - <<'PY'
+import sys; sys.path.insert(0, '.')
+from core.context import get_context
+ctx = get_context()
+
+rows, total = ctx.snow._fetch_page('kb_knowledge', {
+    'sysparm_query': 'workflow_state=published',
+    'sysparm_fields': 'number', 'sysparm_limit': 1})
+print(f'published articles matching the query : {total}')
+
+articles = ctx.knowledge.get_published()
+print(f'readable by the integration user      : {len(articles)}')
+PY""")
+g.p('A gap between these two figures is normal — knowledge base access is governed by user '
+    'criteria, so an integration account legitimately sees a subset. What matters is that '
+    'the gap is explainable. The client logs the same comparison at INFO on every paginated '
+    'read:')
+g.code("""INFO [core.snow] kb_knowledge: query matched 4409 records, 191 readable by svc.advisor""")
+g.callout('warn', 'A large unexplained gap means missing read access, not a bug.',
+          'If the integration user should see more than it does, the fix is in ServiceNow: '
+          'add the account to the user criteria on the relevant knowledge bases. Indexing '
+          'only a fraction of the KB does not fail loudly — it just produces fewer grounded '
+          'citations, which reads as the model being unhelpful rather than as a permissions '
+          'problem.')
+
 g.callout('info', 'After this, refreshes are automatic.',
           'The nightly maintenance job re-runs the indexer at 02:00 UTC by default and only '
           'embeds new or changed records, so the ongoing cost is negligible.')
