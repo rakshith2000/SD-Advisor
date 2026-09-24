@@ -2,4 +2,5 @@
 *
 !.gitignore
 !conf.sample.json
+.vault_token
 
