@@ -1,0 +1,48 @@
+# systemd unit for the Aged Ticket Advisor.
+#
+#   sudo cp ops/aged-ticket-advisor.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now aged-ticket-advisor
+#   journalctl -u aged-ticket-advisor -f
+#
+# Runs the web UI and the scheduler in one process. Deliberately NOT a cron
+# entry: the stream tier needs to hold state between ticks, and a long-lived
+# process is what makes near-real-time alerting possible.
+
+[Unit]
+Description=Aged Ticket Advisor (service desk aged pending ticket review)
+Documentation=file:/genai/etc/scripts/aged_ticket_advisor/README.md
+After=network-online.target vault.service mysqld.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=genai
+Group=genai
+WorkingDirectory=/genai/etc/scripts/aged_ticket_advisor
+
+Environment=PYTHONUNBUFFERED=1
+Environment=ATA_CONFIG=/genai/etc/scripts/aged_ticket_advisor/config/conf.json
+
+ExecStartPre=/genai/etc/scripts/genai_venv_1/bin/python run.py doctor
+ExecStart=/genai/etc/scripts/genai_venv_1/bin/python run.py serve
+
+Restart=on-failure
+RestartSec=15
+TimeoutStopSec=30
+KillSignal=SIGTERM
+
+# The service only ever reads from ServiceNow, so give it no more than it needs.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+ReadWritePaths=/genai/etc/scripts/aged_ticket_advisor/logs
+ReadWritePaths=/genai/etc/scripts/aged_ticket_advisor/config
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=ata
+
+[Install]
+WantedBy=multi-user.target

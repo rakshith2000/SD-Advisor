@@ -1,0 +1,30 @@
+# Aged Ticket Advisor - runtime dependencies
+# Many of these already exist in the shared genai_venv_1; pinned here so the
+# project can also stand up its own isolated venv.
+
+# --- Web service + UI ---
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+jinja2==3.1.6
+python-multipart==0.0.20
+itsdangerous==2.2.0
+passlib[bcrypt]==1.7.4
+
+# --- Scheduling ---
+APScheduler==3.11.0
+
+# --- Data / integrations ---
+requests==2.32.3
+PyMySQL==1.1.1
+hvac==2.3.0
+numpy==2.0.2
+pydantic==2.12.5
+
+# --- LLM ---
+openai==2.16.0
+
+# --- Resilience ---
+tenacity==9.0.0
+
+# --- Dev / test ---
+pytest==8.3.4

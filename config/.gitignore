@@ -1,0 +1,5 @@
+# Nothing here is committed except the sample.
+*
+!.gitignore
+!conf.sample.json
+!.vault_token

@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block title %}Sign in &middot; Aged Ticket Advisor{% endblock %}
+
+{% block layout %}
+<div class="login-wrap">
+  <div class="login-card">
+    <h1>Aged Ticket Advisor</h1>
+    <p class="sub">Service desk aged pending ticket review</p>
+
+    {% if error %}<div class="error">{{ error }}</div>{% endif %}
+
+    <form method="post" action="/login">
+      <input type="hidden" name="next" value="{{ next }}">
+      <div class="field">
+        <label for="username">Username</label>
+        <input id="username" name="username" type="text" autocomplete="username" required autofocus>
+      </div>
+      <div class="field">
+        <label for="password">Password</label>
+        <input id="password" name="password" type="password" autocomplete="current-password" required>
+      </div>
+      <button class="btn primary" type="submit" style="width:100%;margin-top:6px;">Sign in</button>
+    </form>
+  </div>
+</div>
+{% endblock %}

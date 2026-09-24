@@ -1,0 +1,9 @@
+logs/
+.preview/
+__pycache__/
+*.pyc
+.pytest_cache/
+config/conf.json
+config/.session_secret
+config/.vault_token
+.venv/

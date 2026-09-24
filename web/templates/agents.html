@@ -1,0 +1,102 @@
+{% extends "base.html" %}
+{% block title %}By agent &middot; Aged Ticket Advisor{% endblock %}
+
+{% block content %}
+
+<div class="page-head">
+  <h1>Aged backlog by agent</h1>
+  <p>
+    Worst first, by the highest-scoring ticket each person is holding.
+    {% if has_compliance %}
+    The audit column is the agent's 30-day average compliance score from the
+    ticket audit tool &mdash; a persistently low score alongside a stale backlog
+    is a coaching conversation, not a queue problem.
+    {% endif %}
+  </p>
+</div>
+
+<div class="card">
+  <div class="card-head">
+    <h2>{{ rollup|length }} agent{{ 's' if rollup|length != 1 }}</h2>
+    <span class="sub">{{ total }} aged tickets in scope</span>
+  </div>
+  <div class="card-body flush">
+    {% if not rollup %}
+    <div class="empty">No aged tickets assigned in your scope.</div>
+    {% else %}
+    <table class="data">
+      <thead>
+        <tr>
+          <th>Agent</th>
+          <th class="num">Aged</th>
+          <th class="num">Worst score</th>
+          <th class="num">Avg idle</th>
+          <th class="num">SLA breached</th>
+          <th class="num">Stale 4d+</th>
+          <th class="num">Caller waiting</th>
+          <th class="num">KB gaps</th>
+          {% if has_compliance %}<th class="num">Audit avg</th>{% endif %}
+          <th>Top tickets</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for entry in rollup %}
+        <tr>
+          <td>
+            <strong>{{ entry.agent }}</strong>
+            <div class="subtle">
+              <a href="/board?agent={{ entry.agent|urlencode }}">See their queue</a>
+            </div>
+          </td>
+          <td class="num">{{ entry.ticket_count }}</td>
+          <td class="num">
+            <div class="sev sev-{{ 'critical' if entry.max_score >= 70
+                                   else 'high' if entry.max_score >= 45
+                                   else 'medium' if entry.max_score >= 25 else 'low' }}"
+                 style="justify-content:flex-end;">
+              <span class="sev-dot" aria-hidden="true"></span>
+              <strong class="tnum">{{ entry.max_score }}</strong>
+            </div>
+          </td>
+          <td class="num">{{ entry.avg_idle_days }}d</td>
+          <td class="num" style="{{ 'color:var(--status-critical);font-weight:600;' if entry.sla_breached }}">
+            {{ entry.sla_breached }}
+          </td>
+          <td class="num" style="{{ 'color:var(--status-serious);font-weight:600;' if entry.critically_stale }}">
+            {{ entry.critically_stale }}
+          </td>
+          <td class="num">{{ entry.caller_awaiting }}</td>
+          <td class="num">{{ entry.kb_gaps }}</td>
+          {% if has_compliance %}
+          <td class="num">
+            {% if entry.compliance %}
+            <span style="{{ 'color:var(--status-critical);font-weight:600;'
+                            if entry.compliance.avg_score < 60 }}">
+              {{ entry.compliance.avg_score }}%
+            </span>
+            <div class="subtle">{{ entry.compliance.audited }} audited</div>
+            {% else %}
+            <span class="subtle">&mdash;</span>
+            {% endif %}
+          </td>
+          {% endif %}
+          <td style="max-width:280px;">
+            {% for ticket in entry.tickets[:3] %}
+            <div style="margin-bottom:3px;">
+              <a class="ticket-id" href="/ticket/{{ ticket.incident_number }}">{{ ticket.incident_number }}</a>
+              <span class="subtle">{{ (ticket.short_description or '')|truncate(38, true, '...') }}</span>
+            </div>
+            {% endfor %}
+            {% if entry.tickets|length > 3 %}
+            <div class="subtle">and {{ entry.tickets|length - 3 }} more</div>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+  </div>
+</div>
+
+{% endblock %}

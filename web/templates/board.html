@@ -1,0 +1,219 @@
+{% extends "base.html" %}
+{% block title %}Review board &middot; Aged Ticket Advisor{% endblock %}
+
+{% macro tile(label, value, note, tone) %}
+<div class="tile {{ 'is-' ~ tone if tone }}">
+  <div class="label">{{ label }}</div>
+  <div class="value">{{ value }}</div>
+  {% if note %}<div class="note">{{ note }}</div>{% endif %}
+</div>
+{% endmacro %}
+
+{% block content %}
+
+<div class="page-head">
+  <h1>Aged pending ticket review</h1>
+  <p>
+    Open more than {{ aged_after_days }} days, ranked by attention score.
+    Working from the top down is the review.
+  </p>
+</div>
+
+{% if shadow_mode %}
+<div class="banner">
+  <div>
+    <strong>Shadow mode.</strong>
+    Recommendations are recorded for accuracy measurement and no digests are being
+    emailed out. Marking whether you agree on each ticket is what builds the
+    evidence for switching this on properly.
+  </div>
+</div>
+{% endif %}
+
+<div class="tiles">
+  {{ tile('Aged tickets', summary.total, 'in your scope', none) }}
+  {{ tile('Waiting on us', summary.ours, 'the rest are blocked elsewhere',
+          'critical' if summary.ours else 'good') }}
+  {{ tile('SLA breached', summary.sla_breached, summary.sla_at_risk ~ ' more at risk',
+          'critical' if summary.sla_breached else 'good') }}
+  {{ tile('No action 4+ days', summary.critically_stale, 'needs a nudge',
+          'serious' if summary.critically_stale else 'good') }}
+  {{ tile('Caller awaiting reply', summary.caller_awaiting, 'we owe a response',
+          'serious' if summary.caller_awaiting else 'good') }}
+  {{ tile('Blocker cleared', summary.dependency_cleared, 'change or problem already closed',
+          'warning' if summary.dependency_cleared else 'good') }}
+  {{ tile('Closure candidates', summary.close_candidates, 'follow-ups exhausted', none) }}
+  {{ tile('Needs your judgement', summary.needs_review, 'low model confidence', none) }}
+</div>
+
+{% if movement.new or movement.worsening %}
+<div class="banner info">
+  <div>
+    <strong>Since yesterday:</strong>
+    {{ movement.new|length }} newly aged,
+    {{ movement.worsening|length }} got materially worse.
+    {% if movement.new %}
+      New &mdash;
+      {% for row in movement.new[:8] %}<a href="/ticket/{{ row.incident_number }}"
+         class="tnum">{{ row.incident_number }}</a>{{ ", " if not loop.last }}{% endfor %}.
+    {% endif %}
+  </div>
+</div>
+{% endif %}
+
+<form class="filters" method="get" action="/board">
+  <div class="field">
+    <label for="group">Group</label>
+    <select id="group" name="group">
+      <option value="">All in scope</option>
+      {% for g in all_groups %}
+      <option value="{{ g }}" {{ 'selected' if filters.group == g }}>{{ g }}</option>
+      {% endfor %}
+    </select>
+  </div>
+
+  <div class="field">
+    <label for="agent">Agent</label>
+    <select id="agent" name="agent">
+      <option value="">Everyone</option>
+      {% for a in agents %}
+      <option value="{{ a }}" {{ 'selected' if filters.agent == a }}>{{ a }}</option>
+      {% endfor %}
+    </select>
+  </div>
+
+  <div class="field">
+    <label for="ball">Blocked by</label>
+    <select id="ball" name="ball">
+      <option value="">Anyone</option>
+      {% for key, label in BALL_LABELS.items() %}
+      <option value="{{ key }}" {{ 'selected' if filters.ball == key }}>{{ label }}</option>
+      {% endfor %}
+    </select>
+  </div>
+
+  <div class="field">
+    <label for="flag">Risk flag</label>
+    <select id="flag" name="flag">
+      <option value="">Any</option>
+      {% for key, label in FLAG_LABELS.items() %}
+      <option value="{{ key }}" {{ 'selected' if filters.flag == key }}>{{ label }}</option>
+      {% endfor %}
+    </select>
+  </div>
+
+  <div class="field">
+    <label for="action">Suggested step</label>
+    <select id="action" name="action">
+      <option value="">Any</option>
+      {% for key, label in ACTION_LABELS.items() %}
+      <option value="{{ key }}" {{ 'selected' if filters.action == key }}>{{ label }}</option>
+      {% endfor %}
+    </select>
+  </div>
+
+  <div class="field">
+    <label for="min_score">Min score</label>
+    <input id="min_score" name="min_score" type="number" min="0" max="100"
+           value="{{ filters.min_score }}" style="min-width:90px;">
+  </div>
+
+  <label class="checkline">
+    <input type="checkbox" name="show_snoozed" value="true" {{ 'checked' if filters.show_snoozed }}>
+    Include snoozed
+  </label>
+
+  <button class="btn primary" type="submit">Apply</button>
+  <a class="btn" href="/board">Reset</a>
+</form>
+
+<div class="card">
+  <div class="card-head">
+    <h2>{{ rows|length }} ticket{{ 's' if rows|length != 1 }}</h2>
+    <span class="sub">Highest attention score first</span>
+  </div>
+  <div class="card-body flush">
+    {% if not rows %}
+    <div class="empty">
+      Nothing aged in this view. Either the backlog is clean or the filters are too narrow.
+    </div>
+    {% else %}
+    <table class="data">
+      <thead>
+        <tr>
+          <th class="num">Score</th>
+          <th>Ticket</th>
+          <th>Assigned to</th>
+          <th class="num">Age</th>
+          <th class="num">Idle</th>
+          <th>Blocked by</th>
+          <th>Suggested next step</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in rows %}
+        <tr>
+          <td class="num">
+            <div class="sev sev-{{ row.severity }}">
+              <span class="sev-dot" aria-hidden="true"></span>
+              <strong class="tnum">{{ row.attention_score }}</strong>
+            </div>
+            <div class="sev-label">{{ row.severity|capitalize }}</div>
+          </td>
+
+          <td>
+            <a class="ticket-id" href="/ticket/{{ row.incident_number }}">{{ row.incident_number }}</a>
+            {% if row.snoozed %}<span class="chip">Snoozed</span>{% endif %}
+            <div class="desc">{{ (row.short_description or '(no description)')|truncate(84, true, '...') }}</div>
+            {% if row.flag_labels %}
+            <div class="chips">
+              {% for flag in row.flag_labels[:5] %}
+              <span class="chip {{ 'alert' if flag in ('SLA breached', 'No action 4+ days') }}">{{ flag }}</span>
+              {% endfor %}
+            </div>
+            {% endif %}
+          </td>
+
+          <td>
+            {{ row.assigned_to or 'Unassigned' }}
+            <div class="subtle">{{ row.assignment_group or '-' }}</div>
+          </td>
+
+          <td class="num">{{ row.age_days_display }}d</td>
+          <td class="num">{{ row.idle_days_display }}d</td>
+
+          <td><strong>{{ row.ball_label }}</strong></td>
+
+          <td style="max-width:340px;">
+            {% if row.recommended_action %}
+            <strong>{{ row.action_label }}</strong>
+            {% if row.suggested_target_group %}
+            <span class="subtle">&rarr; {{ row.suggested_target_group }}</span>
+            {% endif %}
+            <div class="subtle" style="margin-top:2px;">
+              {% if row.low_confidence %}Needs your review &middot; {% endif %}{{ row.confidence_pct }}% confidence
+            </div>
+            {% if row.rationale %}
+            <div class="subtle" style="margin-top:3px;color:var(--text-secondary);">
+              {{ row.rationale|truncate(120, true, '...') }}
+            </div>
+            {% endif %}
+            {% else %}
+            <span class="subtle">Not yet analysed</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+  </div>
+</div>
+
+{% if user.role == 'ADMIN' %}
+<form method="post" action="/digest/send">
+  <button class="btn small" type="submit">Send the lead digest now</button>
+</form>
+{% endif %}
+
+{% endblock %}

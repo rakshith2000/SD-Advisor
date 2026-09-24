@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Aged Ticket Advisor{% endblock %}</title>
+  <link rel="stylesheet" href="/static/app.css">
+  <script>
+    // Applied before paint so a dark-mode reload does not flash light.
+    (function () {
+      var stored = localStorage.getItem('ata-theme');
+      if (stored) { document.documentElement.setAttribute('data-theme', stored); }
+    })();
+  </script>
+</head>
+<body>
+
+{% if user %}
+<header class="topbar">
+  <div class="topbar-inner">
+    <div class="brand">Aged Ticket Advisor <span>&middot; {{ customer }}</span></div>
+    {% set path = request.url.path %}
+    <nav class="nav">
+      <a href="/board"    class="{{ 'active' if path.startswith('/board') or path.startswith('/ticket') }}">Board</a>
+      <a href="/agents"   class="{{ 'active' if path.startswith('/agents') }}">By agent</a>
+      <a href="/accuracy" class="{{ 'active' if path.startswith('/accuracy') }}">Accuracy</a>
+      {% if user.role == 'ADMIN' %}
+      <a href="/settings/weights" class="{{ 'active' if path.startswith('/settings') }}">Weights</a>
+      {% endif %}
+      <a href="/digest/preview" target="_blank" rel="noopener">Digest preview</a>
+    </nav>
+    <div class="topbar-meta">
+      {% if shadow_mode %}<span title="Nothing is being emailed to the wider team">Shadow mode</span>{% endif %}
+      <span>{{ user.full_name }}</span>
+      <button class="theme-toggle" type="button" onclick="toggleTheme()"
+              title="Switch between light and dark" aria-label="Switch colour theme">&#9681;</button>
+      <a href="/logout">Sign out</a>
+    </div>
+  </div>
+</header>
+{% endif %}
+
+{% block layout %}
+<main class="shell">
+  {% block content %}{% endblock %}
+</main>
+{% endblock %}
+
+<script>
+  function toggleTheme() {
+    var root = document.documentElement;
+    var current = root.getAttribute('data-theme');
+    if (!current) {
+      current = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    }
+    var next = current === 'dark' ? 'light' : 'dark';
+    root.setAttribute('data-theme', next);
+    localStorage.setItem('ata-theme', next);
+  }
+
+  function copyText(id, button) {
+    var el = document.getElementById(id);
+    if (!el) { return; }
+    navigator.clipboard.writeText(el.innerText).then(function () {
+      var original = button.textContent;
+      button.textContent = 'Copied';
+      setTimeout(function () { button.textContent = original; }, 1600);
+    });
+  }
+</script>
+{% block scripts %}{% endblock %}
+</body>
+</html>

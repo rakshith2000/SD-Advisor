@@ -1,0 +1,200 @@
+{% extends "base.html" %}
+{% block title %}Accuracy &middot; Aged Ticket Advisor{% endblock %}
+
+{% macro tile(label, value, note, tone) %}
+<div class="tile {{ 'is-' ~ tone if tone }}">
+  <div class="label">{{ label }}</div>
+  <div class="value">{{ value }}</div>
+  {% if note %}<div class="note">{{ note }}</div>{% endif %}
+</div>
+{% endmacro %}
+
+{% block content %}
+
+<div class="page-head">
+  <h1>Accuracy</h1>
+  <p>
+    Measured from the verdicts leads record on each ticket, over the last {{ days }} days.
+    These are the numbers that decide whether this comes out of shadow mode.
+  </p>
+</div>
+
+{% if total_feedback < 20 %}
+<div class="banner">
+  <div>
+    <strong>Not enough data yet.</strong>
+    {{ total_feedback }} verdict{{ 's' if total_feedback != 1 }} recorded.
+    Treat these percentages as indicative until there are at least 20, and
+    ideally 100, across a representative spread of ticket types.
+  </div>
+</div>
+{% endif %}
+
+<div class="tiles">
+  {{ tile('Action agreement',
+          (agreement_pct ~ '%') if agreement_pct is not none else '-',
+          'target ' ~ target_agreement ~ '% &middot; lead did what we suggested',
+          'good' if agreement_pct and agreement_pct >= target_agreement
+          else 'serious' if agreement_pct else none) }}
+
+  {{ tile('Actionable precision',
+          (precision_pct ~ '%') if precision_pct is not none else '-',
+          'target ' ~ target_precision ~ '% &middot; flagged tickets that mattered',
+          'good' if precision_pct and precision_pct >= target_precision
+          else 'serious' if precision_pct else none) }}
+
+  {{ tile('Review coverage',
+          (review_coverage_pct ~ '%') if review_coverage_pct is not none else '-',
+          reviewed ~ ' of ' ~ recommended ~ ' recommendations judged', none) }}
+
+  {{ tile('Silent breaches', false_quiet,
+          'breached with no prior warning',
+          'critical' if false_quiet else 'good') }}
+</div>
+
+<div class="grid-2">
+
+  <div class="card">
+    <div class="card-head">
+      <h2>Verdict mix</h2>
+      <span class="sub">{{ total_feedback }} recorded</span>
+    </div>
+    <div class="card-body">
+      {% set rows = [
+        ('Agreed', accepted, 'good'),
+        ('Agreed with edits', modified, 'good'),
+        ('Rejected', rejected, 'critical'),
+        ('Not applicable', not_applicable, 'warning')
+      ] %}
+      {% for label, count, tone in rows %}
+      <div style="margin-bottom:11px;">
+        <div style="display:flex;justify-content:space-between;font-size:13px;">
+          <span>{{ label }}</span>
+          <span class="tnum subtle">
+            {{ count }}{% if total_feedback %} &middot;
+            {{ (100 * count / total_feedback)|round(1) }}%{% endif %}
+          </span>
+        </div>
+        <div class="meter is-{{ tone }}" style="margin-top:4px;">
+          <span style="width: {{ (100 * count / total_feedback) if total_feedback else 0 }}%;"></span>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-head">
+      <h2>Agreement by suggested action</h2>
+      <span class="sub">Where the model is reliable, and where it is not</span>
+    </div>
+    <div class="card-body flush">
+      {% if not by_action %}
+      <div class="empty">No judged recommendations yet.</div>
+      {% else %}
+      <table class="data">
+        <thead>
+          <tr>
+            <th>Suggested action</th>
+            <th class="num">Judged</th>
+            <th class="num">Agreed</th>
+            <th class="num">Rate</th>
+            <th class="num">Avg confidence</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in by_action %}
+          <tr>
+            <td>{{ ACTION_LABELS.get(row.action, row.action) }}</td>
+            <td class="num">{{ row.judged }}</td>
+            <td class="num">{{ row.agreed }}</td>
+            <td class="num">
+              {% if row.agreement is not none %}
+              <div class="meter-row" style="justify-content:flex-end;">
+                <div class="meter {{ 'is-good' if row.agreement >= target_agreement
+                                     else 'is-serious' }}" style="width:60px;">
+                  <span style="width: {{ row.agreement }}%;"></span>
+                </div>
+                <span class="tnum">{{ row.agreement }}%</span>
+              </div>
+              {% else %}&mdash;{% endif %}
+            </td>
+            <td class="num">{{ ((row.avg_confidence or 0) * 100)|round|int }}%</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% endif %}
+    </div>
+  </div>
+
+</div>
+
+<div class="card">
+  <div class="card-head">
+    <h2>How these are calculated</h2>
+  </div>
+  <div class="card-body">
+    <dl class="kv" style="grid-template-columns:200px 1fr;">
+      <dt>Action agreement</dt>
+      <dd>
+        Verdicts of <em>agreed</em> or <em>agreed with edits</em>, as a share of all verdicts.
+        This is the headline number: did we tell the lead the right thing to do?
+        Target {{ target_agreement }}%.
+      </dd>
+
+      <dt>Actionable precision</dt>
+      <dd>
+        The same numerator, but excluding <em>already handled</em> from the denominator,
+        so it measures only whether flagging the ticket was justified. Target {{ target_precision }}%.
+        This is the guard against alert fatigue.
+      </dd>
+
+      <dt>Review coverage</dt>
+      <dd>
+        Share of recommendations that received any verdict. Low coverage means the
+        other two numbers are drawn from a small, self-selected sample and should
+        be read with caution.
+      </dd>
+
+      <dt>Silent breaches</dt>
+      <dd>
+        Tickets that breached SLA without ever being flagged as at risk beforehand.
+        Recall, not precision &mdash; the failure mode that a precision-only dashboard hides.
+        This should be zero.
+      </dd>
+    </dl>
+  </div>
+</div>
+
+{% if volume %}
+<div class="card">
+  <div class="card-head">
+    <h2>Recommendation volume</h2>
+    <span class="sub">New analyses per day (cache hits excluded)</span>
+  </div>
+  <div class="card-body flush">
+    <table class="data">
+      <thead><tr><th>Day</th><th class="num">Analysed</th></tr></thead>
+      <tbody>
+        {% set peak = volume|map(attribute='n')|max %}
+        {% for row in volume %}
+        <tr>
+          <td class="tnum">{{ row.day }}</td>
+          <td class="num">
+            <div class="meter-row" style="justify-content:flex-end;">
+              <div class="meter" style="width:120px;">
+                <span style="width: {{ (100 * row.n / peak) if peak else 0 }}%;"></span>
+              </div>
+              <span class="tnum">{{ row.n }}</span>
+            </div>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+
+{% endblock %}

@@ -1,0 +1,103 @@
+{% extends "base.html" %}
+{% block title %}Attention weights &middot; Aged Ticket Advisor{% endblock %}
+
+{% block content %}
+
+<div class="page-head">
+  <h1>Attention weights</h1>
+  <p>
+    How much each signal contributes to the 0&ndash;100 attention score that ranks
+    the board. Weights must total 100 across enabled components; if they do not,
+    the scorer silently falls back to the defaults rather than producing a
+    distorted ranking.
+  </p>
+</div>
+
+{% if saved %}
+<div class="banner good"><div>Weights saved. They apply from the next signal refresh.</div></div>
+{% endif %}
+
+{% if total != 100 %}
+<div class="banner">
+  <div>
+    <strong>Currently {{ total }}, not 100.</strong>
+    Until this totals exactly 100 the scorer is using the built-in defaults.
+  </div>
+</div>
+{% endif %}
+
+<form method="post" action="/settings/weights">
+  <div class="card">
+    <div class="card-head">
+      <h2>Components</h2>
+      <span class="sub">Total {{ total }} / 100</span>
+    </div>
+    <div class="card-body flush">
+      <table class="data">
+        <thead>
+          <tr>
+            <th>Component</th>
+            <th>What it measures</th>
+            <th class="num">Default</th>
+            <th class="num">Weight</th>
+            <th class="num">Enabled</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in rows %}
+          <tr>
+            <td><strong>{{ row.component|replace('_', ' ')|capitalize }}</strong></td>
+            <td class="subtle" style="color:var(--text-secondary);">{{ row.description }}</td>
+            <td class="num subtle">{{ defaults.get(row.component, '-') }}</td>
+            <td class="num">
+              <input type="number" name="{{ row.component }}" value="{{ row.weightage }}"
+                     min="0" max="100" style="width:80px;text-align:right;">
+            </td>
+            <td class="num">
+              <input type="checkbox" name="{{ row.component }}_enabled" value="1"
+                     {{ 'checked' if row.enabled }}>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="btn-row">
+    <button class="btn primary" type="submit">Save weights</button>
+    <a class="btn" href="/board">Cancel</a>
+  </div>
+</form>
+
+<div class="card" style="margin-top:16px;">
+  <div class="card-head"><h2>Guidance</h2></div>
+  <div class="card-body">
+    <dl class="kv" style="grid-template-columns:170px 1fr;">
+      <dt>Stagnation</dt>
+      <dd>
+        Raise this if leads care most about tickets nobody is touching. It is the
+        component most directly tied to the manual review this replaces.
+      </dd>
+      <dt>SLA jeopardy</dt>
+      <dd>
+        Raise this if contractual breach is the dominant concern. Note that a
+        breached ticket already scores the maximum on this component, so pushing
+        it too high makes every breached ticket rank identically.
+      </dd>
+      <dt>Blocked stale</dt>
+      <dd>
+        Covers caller-replied-unanswered, cleared dependencies and never-touched
+        tickets. These are the ones a manual review misses most often, so it is
+        worth keeping meaningful weight here.
+      </dd>
+      <dt>Age</dt>
+      <dd>
+        Deliberately modest by default. Age alone is a weak signal &mdash; a
+        legitimately blocked ticket gets old without anyone being at fault.
+      </dd>
+    </dl>
+  </div>
+</div>
+
+{% endblock %}

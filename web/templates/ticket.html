@@ -1,0 +1,327 @@
+{% extends "base.html" %}
+{% block title %}{{ row.incident_number }} &middot; Aged Ticket Advisor{% endblock %}
+
+{% block content %}
+
+<div class="page-head">
+  <h1>
+    {{ row.incident_number }}
+    <span class="sev sev-{{ row.severity }}" style="font-size:13px;font-weight:500;margin-left:8px;">
+      <span class="sev-dot" aria-hidden="true"></span>
+      <span class="sev-label">{{ row.severity|capitalize }} &middot; score {{ row.attention_score }}</span>
+    </span>
+  </h1>
+  <p>
+    {{ row.short_description or '(no description)' }}
+    {% if snow_url %}
+    &middot; <a href="{{ snow_url }}/nav_to.do?uri=incident.do?sys_id={{ ticket.sys_id }}"
+                target="_blank" rel="noopener">Open in ServiceNow</a>
+    {% endif %}
+  </p>
+</div>
+
+{% if request.query_params.get('queued') %}
+<div class="banner good"><div>Re-analysis queued. Refresh in a few seconds to see the updated recommendation.</div></div>
+{% endif %}
+
+{% if row.snoozed %}
+<div class="banner">
+  <div>
+    <strong>Snoozed</strong> until {{ snooze.snoozed_until.strftime('%d %b %Y %H:%M') if snooze }}
+    {% if snooze and snooze.reason %} &mdash; {{ snooze.reason }}{% endif %}.
+    It will not appear in digests until then.
+    <form method="post" action="/ticket/{{ row.incident_number }}/unsnooze" style="display:inline;margin-left:8px;">
+      <button class="btn small" type="submit">Un-snooze</button>
+    </form>
+  </div>
+</div>
+{% endif %}
+
+<div class="grid-side">
+  <div>
+
+    <!-- Recommendation -->
+    <div class="card">
+      <div class="card-head">
+        <h2>Suggested next step</h2>
+        <span class="sub">
+          {% if recommendation.model %}{{ recommendation.model }} &middot; {% endif %}
+          {{ recommendation.created_at.strftime('%d %b %H:%M') if recommendation.created_at else 'not analysed' }}
+        </span>
+      </div>
+      <div class="card-body">
+        {% if recommendation.recommended_action %}
+        <div class="reco">
+          <h3>
+            {{ ACTION_LABELS.get(recommendation.recommended_action, recommendation.recommended_action) }}
+            {% if recommendation.suggested_target_group %}
+            &rarr; {{ recommendation.suggested_target_group }}
+            {% endif %}
+          </h3>
+          <p>{{ recommendation.rationale }}</p>
+        </div>
+
+        <div class="meter-row" style="margin-top:12px;max-width:320px;">
+          <span class="subtle" style="min-width:74px;">Confidence</span>
+          <div class="meter {{ 'is-warning' if row.low_confidence }}" style="flex:1;">
+            <span style="width: {{ row.confidence_pct }}%;"></span>
+          </div>
+          <span class="tnum">{{ row.confidence_pct }}%</span>
+        </div>
+        {% if row.low_confidence %}
+        <p class="subtle" style="margin:6px 0 0;">
+          Below the confidence floor &mdash; treat this as a prompt to look, not as advice.
+        </p>
+        {% endif %}
+
+        {% if recommendation.lead_feedback %}
+        <div style="margin-top:14px;">
+          <div class="subtle" style="text-transform:uppercase;letter-spacing:.04em;font-weight:600;">
+            Coaching note for the agent
+          </div>
+          <p style="margin:4px 0 0;">{{ recommendation.lead_feedback }}</p>
+        </div>
+        {% endif %}
+
+        {% if evidence %}
+        <div style="margin-top:14px;">
+          <div class="subtle" style="text-transform:uppercase;letter-spacing:.04em;font-weight:600;">
+            Evidence cited
+          </div>
+          <ul style="margin:6px 0 0;padding-left:18px;">
+            {% for item in evidence %}
+            <li style="margin-bottom:3px;">
+              <strong class="tnum">{{ item.ref }}</strong>
+              <span class="subtle">({{ item.type|replace('_', ' ') }})</span>
+              {% if item.note %} &mdash; {{ item.note }}{% endif %}
+            </li>
+            {% endfor %}
+          </ul>
+        </div>
+        {% endif %}
+
+        {% else %}
+        <p class="subtle">
+          This ticket has not been analysed yet. Signals and ranking are still available below.
+        </p>
+        {% endif %}
+      </div>
+    </div>
+
+    <!-- Drafts -->
+    {% if recommendation.draft_work_note or recommendation.draft_caller_message %}
+    <div class="card">
+      <div class="card-head">
+        <h2>Ready to paste</h2>
+        <span class="sub">Edit before using &mdash; these are a starting point</span>
+      </div>
+      <div class="card-body">
+        {% if recommendation.draft_work_note %}
+        <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:4px;">
+          <span class="subtle" style="font-weight:600;">Work note</span>
+          <button class="btn small" type="button" onclick="copyText('draft-note', this)">Copy</button>
+        </div>
+        <div class="draft" id="draft-note">{{ recommendation.draft_work_note }}</div>
+        {% endif %}
+
+        {% if recommendation.draft_caller_message %}
+        <div style="display:flex;justify-content:space-between;align-items:baseline;margin:14px 0 4px;">
+          <span class="subtle" style="font-weight:600;">Message to caller</span>
+          <button class="btn small" type="button" onclick="copyText('draft-caller', this)">Copy</button>
+        </div>
+        <div class="draft caller" id="draft-caller">{{ recommendation.draft_caller_message }}</div>
+        {% endif %}
+      </div>
+    </div>
+    {% endif %}
+
+    <!-- Timeline -->
+    <div class="card">
+      <div class="card-head">
+        <h2>Activity</h2>
+        <span class="sub">Newest first &middot; system noise filtered out</span>
+      </div>
+      <div class="card-body">
+        {% if timeline %}
+        <ul class="timeline">
+          {% for event in timeline %}
+          <li class="role-{{ event.role }}">
+            <div class="meta">
+              {{ event.when }} &middot; {{ event.actor }}
+              <span style="text-transform:lowercase;">({{ event.role|lower }})</span>
+              &middot; {{ event.kind }}
+            </div>
+            <div class="body">{{ event.text|truncate(700, true, '...') }}</div>
+          </li>
+          {% endfor %}
+        </ul>
+        {% else %}
+        <p class="subtle">No activity could be loaded from ServiceNow.</p>
+        {% endif %}
+      </div>
+    </div>
+
+  </div>
+
+  <!-- Sidebar -->
+  <div>
+
+    <!-- Feedback -->
+    <div class="card">
+      <div class="card-head"><h2>Your verdict</h2></div>
+      <div class="card-body">
+        <p class="subtle" style="margin-top:0;">
+          This is the only thing that measures accuracy. One click is enough.
+        </p>
+        {% if user.role in ('ADMIN', 'LEAD') %}
+        <form method="post" action="/ticket/{{ row.incident_number }}/feedback">
+          <div class="field" style="margin-bottom:10px;">
+            <label for="decision">Decision</label>
+            <select id="decision" name="decision" style="width:100%;">
+              <option value="ACCEPTED">Agree &mdash; this is the right next step</option>
+              <option value="MODIFIED">Mostly right &mdash; I adjusted it</option>
+              <option value="REJECTED">Wrong &mdash; this is not the right step</option>
+              <option value="NOT_APPLICABLE">Not applicable &mdash; should not have been flagged</option>
+              <option value="DONE">Already handled</option>
+            </select>
+          </div>
+          <div class="field" style="margin-bottom:10px;">
+            <label for="actual_action">What you actually did (optional)</label>
+            <select id="actual_action" name="actual_action" style="width:100%;">
+              <option value="">Not recorded</option>
+              {% for key, label in ACTION_LABELS.items() %}
+              <option value="{{ key }}">{{ label }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="field" style="margin-bottom:10px;">
+            <label for="comment">Comment (optional)</label>
+            <textarea id="comment" name="comment" placeholder="What did we miss?"></textarea>
+          </div>
+          <button class="btn primary" type="submit" style="width:100%;">Record verdict</button>
+        </form>
+        {% else %}
+        <p class="subtle">Your account is read-only.</p>
+        {% endif %}
+      </div>
+    </div>
+
+    <!-- Snooze / re-analyse -->
+    {% if user.role in ('ADMIN', 'LEAD') %}
+    <div class="card">
+      <div class="card-head"><h2>Actions</h2></div>
+      <div class="card-body">
+        <form method="post" action="/ticket/{{ row.incident_number }}/snooze"
+              style="display:flex;gap:8px;align-items:flex-end;margin-bottom:10px;">
+          <div class="field" style="flex:1;">
+            <label for="hours">Snooze for</label>
+            <select id="hours" name="hours" style="width:100%;">
+              <option value="24">24 hours</option>
+              <option value="48">2 days</option>
+              <option value="72">3 days</option>
+              <option value="168">1 week</option>
+            </select>
+          </div>
+          <button class="btn" type="submit">Snooze</button>
+        </form>
+        <form method="post" action="/ticket/{{ row.incident_number }}/reanalyse">
+          <button class="btn small" type="submit">Re-analyse now</button>
+        </form>
+      </div>
+    </div>
+    {% endif %}
+
+    <!-- Signals -->
+    <div class="card">
+      <div class="card-head"><h2>Signals</h2></div>
+      <div class="card-body">
+        <dl class="kv">
+          <dt>Blocked by</dt><dd><strong>{{ row.ball_label }}</strong></dd>
+          <dt>Age</dt><dd class="tnum">{{ row.age_days_display }} days</dd>
+          <dt>Idle</dt><dd class="tnum">{{ row.idle_days_display }} days</dd>
+          <dt>Last agent action</dt>
+          <dd class="tnum">{{ signal.last_agent_action_at or 'never' }}</dd>
+          <dt>Last caller activity</dt>
+          <dd class="tnum">{{ signal.last_caller_activity_at or 'none' }}</dd>
+          <dt>SLA</dt>
+          <dd>
+            {% if signal.sla_breached %}Breached
+            {% elif signal.sla_pct_consumed is not none %}{{ signal.sla_pct_consumed }}% consumed
+            {% else %}No SLA data{% endif %}
+          </dd>
+          {% if signal.projected_breach_at %}
+          <dt>Breaches at</dt><dd class="tnum">{{ signal.projected_breach_at }}</dd>
+          {% endif %}
+          <dt>Follow-ups sent</dt><dd class="tnum">{{ signal.followup_count or 0 }}</dd>
+          {% if signal.dependency_ref %}
+          <dt>Dependency</dt>
+          <dd>
+            <span class="tnum">{{ signal.dependency_ref }}</span>
+            &mdash; {{ signal.dependency_state or 'unknown' }}
+            {% if signal.dependency_resolved %}<span class="chip warn">already closed</span>{% endif %}
+          </dd>
+          {% endif %}
+          {% if signal.expected_resolution_hours %}
+          <dt>Typical for this type</dt>
+          <dd class="tnum">{{ signal.expected_resolution_hours }}h (p90)</dd>
+          {% endif %}
+          <dt>KB article</dt>
+          <dd>
+            {% if signal.kb_attached %}Attached
+            {% elif signal.kb_available %}Available but not attached
+            {% else %}None found{% endif %}
+          </dd>
+          <dt>Priority</dt><dd>{{ ticket.priority }}</dd>
+          <dt>Category</dt><dd>{{ ticket.category }} / {{ ticket.subcategory }}</dd>
+          <dt>Caller</dt><dd>{{ ticket.caller_name or '-' }}</dd>
+          <dt>Opened</dt><dd class="tnum">{{ ticket.opened_at }}</dd>
+        </dl>
+      </div>
+    </div>
+
+    <!-- Why it ranks here -->
+    {% if breakdown %}
+    <div class="card">
+      <div class="card-head">
+        <h2>Why it ranks here</h2>
+        <span class="sub">{{ row.attention_score }} / 100</span>
+      </div>
+      <div class="card-body">
+        {% for name, part in breakdown.items()|sort(attribute='1.points', reverse=true) %}
+        <div style="margin-bottom:9px;">
+          <div style="display:flex;justify-content:space-between;font-size:12px;">
+            <span>{{ name|replace('_', ' ')|capitalize }}</span>
+            <span class="tnum subtle">{{ part.points }} of {{ part.weight }}</span>
+          </div>
+          <div class="meter" style="margin-top:3px;">
+            <span style="width: {{ (part.points / part.weight * 100) if part.weight else 0 }}%;"></span>
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
+
+    <!-- Feedback history -->
+    {% if feedback %}
+    <div class="card">
+      <div class="card-head"><h2>Verdict history</h2></div>
+      <div class="card-body">
+        {% for entry in feedback %}
+        <div style="padding-bottom:9px;margin-bottom:9px;border-bottom:1px solid var(--grid);">
+          <div style="font-size:12.5px;">
+            <strong>{{ entry.decision|replace('_', ' ')|capitalize }}</strong>
+            by {{ entry.user_name }}
+          </div>
+          <div class="subtle tnum">{{ entry.created_at.strftime('%d %b %Y %H:%M') }}</div>
+          {% if entry.comment %}<div class="subtle" style="margin-top:2px;">{{ entry.comment }}</div>{% endif %}
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
+
+  </div>
+</div>
+
+{% endblock %}

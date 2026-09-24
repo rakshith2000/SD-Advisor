@@ -1,0 +1,136 @@
+{
+    "_comment": "Copy to conf.json and adjust. Secrets never live here - they come from Vault.",
+
+    "customer_name": "Kohler",
+
+    "vault": {
+        "url": "https://127.0.0.1:8200",
+        "token_file": "config/.vault_token",
+        "verify_tls": true,
+        "ca_bundle": "/opt/vault/tls/tls.crt",
+        "paths": {
+            "database": "sd_advisor_db",
+            "servicenow": "snow_kohler",
+            "smtp": "sd_advisor_smtp",
+            "azure_openai": "sd_advisor_llm",
+            "web": "sd_advisor_web"
+        }
+    },
+
+    "database": {
+        "host": "localhost",
+        "name": "sd_advisor_db",
+        "port": 3306,
+        "connect_timeout": 10
+    },
+
+    "audit_database": {
+        "_comment": "Read-only link to the existing audit tool, used for agent coaching rollups. Set enabled=false to skip entirely.",
+        "enabled": false,
+        "host": "localhost",
+        "name": "itsm_analytics_db",
+        "vault_path": "itsm_analytics_db"
+    },
+
+    "servicenow": {
+        "url": "https://kohler.service-now.com",
+        "verify_tls": true,
+        "timeout_seconds": 60,
+        "page_size": 200,
+        "max_retries": 3,
+        "assignment_groups": ["Service Desk"],
+        "system_accounts": ["system", "guest", "cac.rest", "integration.user"]
+    },
+
+    "sla": {
+        "_comment": "contract_sla is the DEFINITION; task_sla is that definition attached to one ticket. They join on task_sla.sla -> contract_sla.sys_id. Keys below are contract_sla sys_ids; 'name' is documentation only. Anything not listed falls back to matching words in the definition name, so a new SLA degrades gracefully. Verify with: python run.py sla-map",
+        "_kinds": "RESOLUTION = the customer-facing commitment we score on | RESPONSE = time to first contact | VENDOR = third-party target, reported separately, never counted as our breach | IGNORE = excluded entirely | OTHER = unrecognised, used only as a last resort",
+
+        "include_types": ["SLA"],
+
+        "definitions": {
+            "6a3dab1e1b60e410f8eb0f6e6e4bcba2": { "kind": "RESPONSE",   "name": "Priority 1(Critical) Response" },
+            "342465c72b2a4350793af829ce91bf75": { "kind": "RESPONSE",   "name": "Priority 1(Critical) Incident Response" },
+            "481eab9a1b60e410f8eb0f6e6e4bcb02": { "kind": "RESPONSE",   "name": "Priority 2 (High) Response" },
+            "7d4429c72b2a4350793af829ce91bf34": { "kind": "RESPONSE",   "name": "Priority 2 (Critical) Incident Response" },
+            "288ee35e1b60e410f8eb0f6e6e4bcb76": { "kind": "RESPONSE",   "name": "Priority 3 (Medium) Response" },
+            "3eeea35e1b60e410f8eb0f6e6e4bcb86": { "kind": "RESPONSE",   "name": "Priority 4 (Low) Response" },
+
+            "c1e472d21beca410f8eb0f6e6e4bcb65": { "kind": "RESOLUTION", "name": "Priority 1 (Critical) Resolution" },
+            "0d8ec5072be24350793af829ce91bf83": { "kind": "RESOLUTION", "name": "P1 (Major Incident) Resolution" },
+            "d606b61a1beca410f8eb0f6e6e4bcb9b": { "kind": "RESOLUTION", "name": "Priority 2 (High) Resolution" },
+            "4edbfeda1beca410f8eb0f6e6e4bcbe2": { "kind": "RESOLUTION", "name": "Priority 3 (Medium) Resolution" },
+            "ffbc3e1e1beca410f8eb0f6e6e4bcbae": { "kind": "RESOLUTION", "name": "Priority 4 (Low) Resolution" },
+
+            "10b7e3ab1be47090f8eb0f6e6e4bcb13": { "kind": "VENDOR",     "name": "Vendor Resolution" },
+            "4a0a1f0dff03211001b9ffffffffff78": { "kind": "IGNORE",     "name": "ITSM IAR SLA" }
+        }
+    },
+
+    "llm": {
+        "chat_deployment": "gpt-4o",
+        "embedding_deployment": "text-embedding-3-small",
+        "embedding_dims": 1536,
+        "api_version": "2024-10-21",
+        "max_concurrency": 8,
+        "request_timeout_seconds": 90,
+        "max_retries": 3,
+        "min_confidence_to_surface": 0.55,
+        "min_similarity": 0.55
+    },
+
+    "thresholds": {
+        "aged_after_days": 5,
+        "stagnation_days": 2,
+        "critical_stagnation_days": 4,
+        "sla_jeopardy_pct": 75,
+        "auto_close_followups": 3,
+        "auto_close_silence_days": 5,
+        "digest_max_tickets_per_agent": 25
+    },
+
+    "scheduler": {
+        "stream_interval_minutes": 10,
+        "recommendation_interval_minutes": 60,
+        "stats_refresh_cron": "0 2 * * *",
+        "digests": [
+            {
+                "name": "emea-morning",
+                "cron": "30 7 * * 1-5",
+                "timezone": "Europe/London",
+                "assignment_groups": ["Service Desk"]
+            }
+        ]
+    },
+
+    "mail": {
+        "_comment": "Internal anonymous relay on port 25 - no Vault secret is needed and vault.paths.smtp is simply never found, which the mailer handles. If the relay advertises STARTTLS on 25 (test with: python3 -c \"import smtplib; s=smtplib.SMTP('mailhost.kohler.com',25); s.ehlo(); print(s.has_extn('starttls'))\") set use_starttls to true for free encryption.",
+        "_verify": "CONFIRM the From domain before go-live - a wrong sender is silently quarantined.",
+
+        "enabled": true,
+        "host": "mailhost.kohler.com",
+        "port": 25,
+        "use_starttls": false,
+        "from_address": "sd-advisor@kohlerco.com",
+        "reply_to": "servicedesk-leads@kohlerco.com",
+        "always_bcc": [],
+        "subject_prefix": "[SD Advisor]"
+    },
+
+    "web": {
+        "base_url": "https://kohlerco.com:8444",
+        "host": "0.0.0.0",
+        "port": 8444,
+        "session_cookie": "ata_session",
+        "session_max_age_seconds": 43200,
+        "secret_file": "config/.session_secret"
+    },
+
+    "runtime": {
+        "shadow_mode": true,
+        "_comment_shadow": "shadow_mode=true computes and stores everything but sends no email.",
+        "log_level": "INFO",
+        "log_dir": "logs",
+        "redact_before_llm": true
+    }
+}

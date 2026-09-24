@@ -1,0 +1,151 @@
+{#
+  Agent digest - the agent's own aged queue, with the drafted text they can
+  paste. Intentionally narrower than the lead view: no cross-agent comparison,
+  no compliance column. The point is to make the next action easy, not to
+  rank people against each other.
+#}
+{%- set INK = '#0b0b0b' -%}
+{%- set INK2 = '#52514e' -%}
+{%- set MUTED = '#898781' -%}
+{%- set SURFACE = '#fcfcfb' -%}
+{%- set PLANE = '#f9f9f7' -%}
+{%- set RULE = '#e1e0d9' -%}
+{%- set BORDER = '#c3c2b7' -%}
+{%- set CRITICAL = '#d03b3b' -%}
+{%- set SERIOUS = '#ec835a' -%}
+{%- set WARNING = '#fab219' -%}
+{%- set GOOD = '#0ca30c' -%}
+{%- set ACCENT = '#2a78d6' -%}
+{%- set FONT = "system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" -%}
+
+{%- macro severity_color(sev) -%}
+{%- if sev == 'critical' -%}{{ CRITICAL }}{% elif sev == 'high' %}{{ SERIOUS }}
+{%- elif sev == 'medium' -%}{{ WARNING }}{% else %}{{ GOOD }}{% endif -%}
+{%- endmacro -%}
+
+{%- macro severity_label(sev) -%}
+{%- if sev == 'critical' -%}Critical{% elif sev == 'high' %}High
+{%- elif sev == 'medium' -%}Medium{% else %}Low{% endif -%}
+{%- endmacro -%}
+
+<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:0;background:{{ PLANE }};">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:{{ PLANE }};">
+<tr><td align="center" style="padding:20px 12px;">
+<table role="presentation" width="660" cellpadding="0" cellspacing="0"
+       style="width:660px;max-width:100%;background:{{ SURFACE }};border:1px solid {{ RULE }};border-radius:8px;">
+
+  <tr><td style="padding:20px 20px 14px 20px;border-bottom:1px solid {{ RULE }};">
+    <div style="font:600 17px/1.3 {{ FONT }};color:{{ INK }};">Your aged tickets</div>
+    <div style="font:400 12px/1.5 {{ FONT }};color:{{ INK2 }};padding-top:4px;">
+      {{ agent }} &middot; open more than {{ aged_after_days }} days
+      &middot; {{ generated_at.strftime('%a %d %b, %H:%M') }}
+    </div>
+    <div style="font:400 12px/1.6 {{ FONT }};color:{{ INK2 }};padding-top:10px;">
+      <strong style="color:{{ INK }};">{{ summary.total }}</strong> aged
+      &middot; <strong style="color:{{ CRITICAL if summary.ours else GOOD }};">{{ summary.ours }}</strong> waiting on you
+      {%- if summary.sla_breached %} &middot; <strong style="color:{{ CRITICAL }};">{{ summary.sla_breached }}</strong> SLA breached{% endif %}
+      {%- if summary.caller_awaiting %} &middot; <strong style="color:{{ SERIOUS }};">{{ summary.caller_awaiting }}</strong> caller awaiting your reply{% endif %}
+    </div>
+    {% if shadow_mode %}
+    <div style="margin-top:10px;padding:7px 10px;background:{{ PLANE }};border-left:3px solid {{ WARNING }};
+                font:400 11px/1.45 {{ FONT }};color:{{ INK2 }};">
+      <strong style="color:{{ INK }};">Shadow mode.</strong> These are suggestions under trial, not instructions.
+    </div>
+    {% endif %}
+  </td></tr>
+
+  {% for row in tickets %}
+  <tr><td style="padding:16px 20px;border-bottom:1px solid {{ RULE }};">
+
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>
+      <td valign="top" style="width:10px;padding-top:5px;">
+        <div style="width:8px;height:8px;border-radius:2px;background:{{ severity_color(row.severity) }};"></div>
+      </td>
+      <td valign="top" style="padding-left:8px;">
+        <div style="font:600 14px/1.35 {{ FONT }};color:{{ INK }};">
+          {% if row.url %}<a href="{{ row.url }}" style="color:{{ ACCENT }};text-decoration:none;
+             font-variant-numeric:tabular-nums;">{{ row.incident_number }}</a>{% else %}{{ row.incident_number }}{% endif %}
+          <span style="font-weight:400;color:{{ INK }};">&nbsp;{{ (row.short_description or '')|truncate(64, true, '...') }}</span>
+        </div>
+        <div style="font:400 11px/1.5 {{ FONT }};color:{{ MUTED }};padding-top:3px;
+                    font-variant-numeric:tabular-nums;">
+          {{ severity_label(row.severity) }} &middot; {{ row.age_days_display }} days old
+          &middot; idle {{ row.idle_days_display }} days
+          &middot; blocked by {{ row.ball_label }}
+          {%- if row.caller_name %} &middot; caller {{ row.caller_name }}{% endif %}
+        </div>
+        {% if row.flag_labels %}
+        <div style="padding-top:6px;">
+          {% for flag in row.flag_labels[:5] %}
+          <span style="display:inline-block;font:400 10px/1.5 {{ FONT }};color:{{ INK2 }};
+                       background:{{ PLANE }};border:1px solid {{ RULE }};border-radius:3px;
+                       padding:1px 6px;margin:0 4px 3px 0;">{{ flag }}</span>
+          {% endfor %}
+        </div>
+        {% endif %}
+      </td>
+    </tr></table>
+
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0"
+           style="margin-top:10px;background:{{ PLANE }};border:1px solid {{ RULE }};border-radius:6px;">
+      <tr><td style="padding:11px 13px;">
+        <div style="font:600 12px/1.4 {{ FONT }};color:{{ INK }};">
+          Suggested: {{ row.action_label }}
+          {%- if row.suggested_target_group %} to {{ row.suggested_target_group }}{% endif %}
+        </div>
+        {% if row.rationale %}
+        <div style="font:400 12px/1.5 {{ FONT }};color:{{ INK2 }};padding-top:4px;">{{ row.rationale }}</div>
+        {% endif %}
+        <div style="font:400 10px/1.4 {{ FONT }};color:{{ MUTED }};padding-top:4px;">
+          {% if row.low_confidence %}Low confidence, please sanity-check &middot; {% endif %}confidence {{ row.confidence_pct }}%
+        </div>
+      </td></tr>
+    </table>
+
+    {% if row.draft_work_note or row.draft_caller_message %}
+    <div style="font:600 11px/1.4 {{ FONT }};color:{{ MUTED }};padding:12px 0 4px 0;
+                text-transform:uppercase;letter-spacing:.04em;">Ready to paste</div>
+    {% if row.draft_work_note %}
+    <div style="font:400 11px/1.4 {{ FONT }};color:{{ MUTED }};padding-bottom:3px;">Work note</div>
+    <div style="font:400 12px/1.55 {{ FONT }};color:{{ INK }};background:{{ SURFACE }};
+                border:1px solid {{ RULE }};border-left:3px solid {{ BORDER }};
+                border-radius:4px;padding:9px 11px;white-space:pre-wrap;">{{ row.draft_work_note }}</div>
+    {% endif %}
+    {% if row.draft_caller_message %}
+    <div style="font:400 11px/1.4 {{ FONT }};color:{{ MUTED }};padding:8px 0 3px 0;">Message to caller</div>
+    <div style="font:400 12px/1.55 {{ FONT }};color:{{ INK }};background:{{ SURFACE }};
+                border:1px solid {{ RULE }};border-left:3px solid {{ ACCENT }};
+                border-radius:4px;padding:9px 11px;white-space:pre-wrap;">{{ row.draft_caller_message }}</div>
+    {% endif %}
+    {% endif %}
+
+  </td></tr>
+  {% endfor %}
+
+  <tr><td style="padding:16px 20px 20px 20px;">
+    {% if truncated %}
+    <div style="font:400 11px/1.5 {{ FONT }};color:{{ MUTED }};padding-bottom:12px;">
+      {{ truncated }} more not shown.
+    </div>
+    {% endif %}
+    {% if base_url %}
+    <table role="presentation" cellpadding="0" cellspacing="0"><tr><td style="background:{{ ACCENT }};border-radius:5px;">
+      <a href="{{ base_url }}/board?agent={{ agent|urlencode }}"
+         style="display:inline-block;padding:9px 18px;font:600 13px/1 {{ FONT }};
+                color:#ffffff;text-decoration:none;">Open your queue</a>
+    </td></tr></table>
+    {% endif %}
+    <div style="font:400 11px/1.6 {{ FONT }};color:{{ MUTED }};padding-top:14px;
+                border-top:1px solid {{ RULE }};margin-top:14px;">
+      Nothing has been changed in ServiceNow. Drafted text is a starting point - edit before sending.
+    </div>
+  </td></tr>
+
+</table>
+</td></tr>
+</table>
+</body>
+</html>

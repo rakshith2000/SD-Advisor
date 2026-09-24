@@ -1,0 +1,88 @@
+{#
+  Stream-tier risk alert. Batched per detection run, not one mail per ticket.
+  Deliberately short - this is an interrupt, so it earns its place by being
+  scannable in five seconds.
+#}
+{%- set INK = '#0b0b0b' -%}
+{%- set INK2 = '#52514e' -%}
+{%- set MUTED = '#898781' -%}
+{%- set SURFACE = '#fcfcfb' -%}
+{%- set PLANE = '#f9f9f7' -%}
+{%- set RULE = '#e1e0d9' -%}
+{%- set CRITICAL = '#d03b3b' -%}
+{%- set SERIOUS = '#ec835a' -%}
+{%- set WARNING = '#fab219' -%}
+{%- set GOOD = '#0ca30c' -%}
+{%- set ACCENT = '#2a78d6' -%}
+{%- set FONT = "system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" -%}
+
+{%- set ALERT_META = {
+  'SLA_BREACHED':          ('SLA breached',            CRITICAL),
+  'SLA_JEOPARDY':          ('SLA about to breach',     SERIOUS),
+  'CRITICALLY_STALE':      ('No action for 4+ days',   SERIOUS),
+  'CALLER_AWAITING_REPLY': ('Caller awaiting a reply', WARNING),
+  'DEPENDENCY_CLEARED':    ('Blocker has closed',      ACCENT)
+} -%}
+
+<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:0;background:{{ PLANE }};">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:{{ PLANE }};">
+<tr><td align="center" style="padding:20px 12px;">
+<table role="presentation" width="660" cellpadding="0" cellspacing="0"
+       style="width:660px;max-width:100%;background:{{ SURFACE }};border:1px solid {{ RULE }};border-radius:8px;">
+
+  <tr><td style="padding:18px 20px 12px 20px;border-bottom:1px solid {{ RULE }};">
+    <div style="font:600 16px/1.3 {{ FONT }};color:{{ INK }};">
+      {{ alerts|length }} new risk alert{{ 's' if alerts|length != 1 }}
+    </div>
+    <div style="font:400 12px/1.5 {{ FONT }};color:{{ INK2 }};padding-top:3px;">
+      Detected {{ generated_at.strftime('%H:%M on %a %d %b') }}. Each ticket alerts once per day.
+    </div>
+  </td></tr>
+
+  {% for row in alerts %}
+  {% set meta = ALERT_META.get(row.alert_type, (row.alert_type|replace('_', ' ')|title, MUTED)) %}
+  <tr><td style="padding:12px 20px;border-bottom:1px solid {{ RULE }};">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>
+      <td valign="top" style="width:10px;padding-top:5px;">
+        <div style="width:8px;height:8px;border-radius:2px;background:{{ meta[1] }};"></div>
+      </td>
+      <td valign="top" style="padding-left:8px;">
+        <div style="font:600 12px/1.4 {{ FONT }};color:{{ meta[1] }};">{{ meta[0] }}</div>
+        <div style="font:400 13px/1.45 {{ FONT }};color:{{ INK }};padding-top:2px;">
+          {% if row.url %}<a href="{{ row.url }}" style="color:{{ ACCENT }};text-decoration:none;
+             font-weight:600;font-variant-numeric:tabular-nums;">{{ row.incident_number }}</a>{% else %}
+          <strong>{{ row.incident_number }}</strong>{% endif %}
+          &nbsp;{{ (row.short_description or '')|truncate(70, true, '...') }}
+        </div>
+        <div style="font:400 11px/1.5 {{ FONT }};color:{{ MUTED }};padding-top:3px;
+                    font-variant-numeric:tabular-nums;">
+          {{ row.assigned_to or 'Unassigned' }} &middot; {{ row.assignment_group or '-' }}
+          &middot; score {{ row.attention_score }} &middot; blocked by {{ row.ball_label }}
+          {%- if row.projected_breach_at %} &middot; breaches {{ row.projected_breach_at.strftime('%d %b %H:%M') if row.projected_breach_at.strftime is defined else row.projected_breach_at }}{% endif %}
+        </div>
+      </td>
+    </tr></table>
+  </td></tr>
+  {% endfor %}
+
+  <tr><td style="padding:16px 20px 20px 20px;">
+    {% if base_url %}
+    <table role="presentation" cellpadding="0" cellspacing="0"><tr><td style="background:{{ ACCENT }};border-radius:5px;">
+      <a href="{{ base_url }}/board"
+         style="display:inline-block;padding:8px 16px;font:600 12px/1 {{ FONT }};
+                color:#ffffff;text-decoration:none;">Open the board</a>
+    </td></tr></table>
+    {% endif %}
+    <div style="font:400 11px/1.6 {{ FONT }};color:{{ MUTED }};padding-top:12px;">
+      {% if shadow_mode %}Shadow mode - advisory only. {% endif %}Nothing has been changed in ServiceNow.
+    </div>
+  </td></tr>
+
+</table>
+</td></tr>
+</table>
+</body>
+</html>
