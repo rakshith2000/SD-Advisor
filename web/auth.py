@@ -2,7 +2,15 @@
 
 Signed-cookie sessions rather than server-side state, so the service stays
 stateless and can be restarted mid-shift without logging everyone out.
-Passwords are bcrypt via passlib.
+
+Passwords use the bcrypt library directly rather than passlib. passlib 1.7.4
+(unmaintained since 2020) probes its bcrypt backend at import time by hashing
+a deliberately over-length test value; bcrypt >= 4.1 raises instead of
+silently truncating, so every hash call fails with a misleading "password
+cannot be longer than 72 bytes" regardless of the actual password. Calling
+bcrypt directly avoids that entirely, and the stored format is unchanged -
+passlib emitted standard $2b$ hashes, so credentials created under it still
+verify.
 
 Roles:
   ADMIN  - everything, including weight tuning and user management
@@ -16,26 +24,65 @@ from typing import Any, Dict, List, Optional
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.responses import RedirectResponse
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
-from passlib.context import CryptContext
+import bcrypt
 
 from core.logging_setup import get_logger
 
 log = get_logger('web.auth')
 
-pwd_context = CryptContext(schemes=['bcrypt'], deprecated='auto')
-
 WRITE_ROLES = {'ADMIN', 'LEAD'}
 ADMIN_ROLES = {'ADMIN'}
 
+# bcrypt only consumes the first 72 bytes of input; anything beyond that is
+# ignored, so two different long passwords would collide. Reject rather than
+# truncate. Note this is BYTES, not characters - accented and non-Latin
+# characters cost more than one each.
+MAX_PASSWORD_BYTES = 72
+MIN_PASSWORD_CHARS = 8
+
+
+class PasswordError(ValueError):
+    """Raised for a password the policy will not accept."""
+
+
+def validate_password(raw: str) -> bytes:
+    """Check a candidate password and return it encoded, ready to hash."""
+    if not raw:
+        raise PasswordError('Password is required')
+
+    encoded = raw.encode('utf-8')
+
+    if len(raw) < MIN_PASSWORD_CHARS:
+        raise PasswordError(
+            f'Password must be at least {MIN_PASSWORD_CHARS} characters '
+            f'(got {len(raw)})')
+
+    if len(encoded) > MAX_PASSWORD_BYTES:
+        extra = ''
+        if len(encoded) != len(raw):
+            extra = (f' - note this password is {len(raw)} characters but '
+                     f'{len(encoded)} bytes, because it contains non-ASCII characters')
+        raise PasswordError(
+            f'Password is {len(encoded)} bytes; bcrypt accepts at most '
+            f'{MAX_PASSWORD_BYTES}. Use a shorter passphrase{extra}.')
+
+    return encoded
+
 
 def hash_password(raw: str) -> str:
-    return pwd_context.hash(raw)
+    """Hash a password. Raises PasswordError if it fails policy."""
+    return bcrypt.hashpw(validate_password(raw), bcrypt.gensalt()).decode('ascii')
 
 
 def verify_password(raw: str, hashed: str) -> bool:
+    if not raw or not hashed:
+        return False
     try:
-        return pwd_context.verify(raw, hashed)
-    except Exception:
+        # Truncated defensively: an over-length input at the login form must
+        # fail to match, never raise and turn into a 500.
+        return bcrypt.checkpw(raw.encode('utf-8')[:MAX_PASSWORD_BYTES],
+                              hashed.encode('utf-8'))
+    except (ValueError, TypeError):
         return False
 
 

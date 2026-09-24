@@ -1480,7 +1480,26 @@ g.table(['Role', 'Can do', 'Give to'], [
     ['VIEWER', 'Read only', 'Managers and reporting users'],
 ], widths=[2.4, 8.0, 6.0], code_cols=(0,))
 
-g.h2('13.2 Create the accounts')
+g.h2('13.2 About the password')
+g.callout('info', 'It is a new password that you choose.',
+          'These are local application accounts. The password is not your AD or SSO '
+          'password, not the ServiceNow integration password and not the MySQL password - '
+          'it is stored only in the advisor\'s own advisor_user table, as a bcrypt hash, '
+          'and is used solely to sign in to the board.')
+g.table(['Rule', 'Detail'], [
+    ['Minimum length', '8 characters'],
+    ['Maximum length', '72 bytes — a bcrypt limit. Non-ASCII characters cost more than one '
+                       'byte each, so a 40-character password can exceed it'],
+    ['Entry', 'Omit --password and it is prompted for twice, without echoing'],
+    ['Storage', 'bcrypt, standard $2b$ format, unique salt per account'],
+    ['Changing it', 'python run.py passwd --username <name>'],
+], widths=[3.4, 13.0])
+g.callout('warn', 'Do not pass --password on the command line in production.',
+          'It lands in shell history and is visible in ps output to every user on the box. '
+          'Let the command prompt for it instead; it asks twice, so a typo cannot silently '
+          'create an account nobody can log into.')
+
+g.h2('13.3 Create the accounts')
 g.code("""source /genai/etc/scripts/genai_venv_1/bin/activate
 cd /genai/etc/scripts/aged_ticket_advisor
 
@@ -1516,7 +1535,7 @@ g.rich([('Leaving ', {}), ('--groups', {'code': True}),
         (' blank means the account sees and is emailed about every in-scope group. Passing a '
          'comma-separated list restricts both the board and the digest.', {})])
 
-g.h2('13.3 Verify')
+g.h2('13.4 Verify')
 g.code("""mysql -u sd_advisor -p sd_advisor_db -e "
   SELECT username, full_name, email, role, assignment_groups, active
     FROM advisor_user;"
@@ -2031,6 +2050,7 @@ g.table(['Task', 'Command'], [
     ['Check every dependency', 'python run.py doctor'],
     ['Verify the SLA definition map', 'python run.py sla-map'],
     ['Add a user', 'python run.py adduser --username x --role LEAD'],
+    ['Change a password', 'python run.py passwd --username x'],
     ['Follow the logs', 'journalctl -u aged-ticket-advisor -f'],
 ], widths=[5.6, 10.8], code_cols=(1,))
 
@@ -2401,6 +2421,7 @@ PIPELINE (run from the project directory, venv activated)
   python run.py backfill --days 180
   python run.py sla-map
   python run.py adduser --username X --role LEAD
+  python run.py passwd  --username X
 
 WEB
   /board              ranked review board

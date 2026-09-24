@@ -10,6 +10,7 @@
     python run.py backfill [--days 180]
     python run.py preview -o out.html
     python run.py adduser --username x --role LEAD
+    python run.py passwd  --username x
     python run.py sla-map          # verify how each SLA definition classifies
     python run.py doctor           # check every dependency and exit
 
@@ -144,21 +145,71 @@ def cmd_preview(args) -> int:
 
 
 def cmd_adduser(args) -> int:
-    from web.auth import UserStore
+    from web.auth import PasswordError, UserStore, validate_password
 
     ctx = get_context(args.config)
-    password = args.password or getpass.getpass('Password: ')
-    if not password or len(password) < 8:
-        print('Password must be at least 8 characters', file=sys.stderr)
+    store = UserStore(ctx.db)
+
+    existing = ctx.db.query_one(
+        'SELECT username FROM advisor_user WHERE username = %s', (args.username,))
+    if existing:
+        print(f"Account {args.username!r} already exists. Use 'run.py passwd' to change "
+              f"its password.", file=sys.stderr)
         return 1
 
-    UserStore(ctx.db).create(
+    if args.password:
+        password = args.password
+    else:
+        password = getpass.getpass('Password: ')
+        # getpass does not confirm, and there is no self-service reset, so a
+        # typo here would otherwise create an account nobody can log into.
+        if password != getpass.getpass('Retype password: '):
+            print('Passwords did not match', file=sys.stderr)
+            return 1
+
+    try:
+        validate_password(password)
+    except PasswordError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+
+    store.create(
         username=args.username, password=password,
         full_name=args.full_name or args.username,
         email=args.email or '', role=args.role,
         assignment_groups=args.groups or '')
 
     print(f'Created {args.role} account {args.username!r}')
+    return 0
+
+
+def cmd_passwd(args) -> int:
+    """Change an existing account's password."""
+    from web.auth import PasswordError, hash_password, validate_password
+
+    ctx = get_context(args.config)
+
+    user = ctx.db.query_one(
+        'SELECT id, username, role FROM advisor_user WHERE username = %s', (args.username,))
+    if not user:
+        print(f'No account named {args.username!r}', file=sys.stderr)
+        return 1
+
+    password = args.password or getpass.getpass(f'New password for {args.username}: ')
+    if not args.password and password != getpass.getpass('Retype password: '):
+        print('Passwords did not match', file=sys.stderr)
+        return 1
+
+    try:
+        validate_password(password)
+    except PasswordError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+
+    ctx.db.update('advisor_user', {'password_hash': hash_password(password)},
+                  conditions=[{'col': 'id', 'op': 'eq', 'val': user['id']}])
+
+    print(f"Password updated for {user['username']} ({user['role']})")
     return 0
 
 
@@ -342,6 +393,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument('--role', default='LEAD', choices=['ADMIN', 'LEAD', 'VIEWER'])
     p.add_argument('--groups', help='comma-separated assignment groups; blank means all')
     p.set_defaults(func=cmd_adduser)
+
+    p = sub.add_parser('passwd', help='change an account password')
+    p.add_argument('--username', required=True)
+    p.add_argument('--password', help='prompted for (twice) if omitted')
+    p.set_defaults(func=cmd_passwd)
 
     p = sub.add_parser('sla-map', help='show how each SLA definition classifies')
     p.add_argument('--table', default='incident', help='contract_sla collection (default: incident)')
