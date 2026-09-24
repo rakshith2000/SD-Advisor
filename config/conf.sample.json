@@ -4,10 +4,24 @@
     "customer_name": "Kohler",
 
     "vault": {
+        "_comment": "auth_method 'approle' is recommended for the long-running service: a short-lived token is obtained at startup and renewed automatically, with re-login at max TTL. Use 'token' only for a quick trial.",
+
         "url": "https://127.0.0.1:8200",
-        "token_file": "config/.vault_token",
+        "auth_method": "approle",
         "verify_tls": true,
         "ca_bundle": "/opt/vault/tls/tls.crt",
+
+        "token_file": "config/.vault_token",
+
+        "approle": {
+            "role_id_file": "config/.vault_role_id",
+            "secret_id_file": "config/.vault_secret_id",
+            "_write_token_file": "Mirrors the live token to token_file for operational tooling. The app never reads it in approle mode. Leave false unless something external needs it - a token on disk is what AppRole exists to avoid.",
+            "write_token_file": false,
+            "renew_ratio": 0.5,
+            "min_renew_seconds": 60
+        },
+
         "paths": {
             "database": "sd_advisor_db",
             "servicenow": "snow_kohler",

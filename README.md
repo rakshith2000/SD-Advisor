@@ -151,6 +151,28 @@ secret/sd_advisor_web    secret_key=<openssl rand -base64 48>   webhook_token=<o
 (`mailhost.kohler.com:25`) is anonymous, and the mailer treats a missing SMTP
 secret as an open relay. Create it only if authentication is introduced later.
 
+### Vault authentication
+
+Use **AppRole**, not a static token — the service obtains a short-lived token
+at startup, renews it on a background thread, and re-authenticates when it
+hits max TTL:
+
+```bash
+vault auth enable approle
+vault write auth/approle/role/sd-advisor \
+    token_policies="sd-advisor" token_ttl=1h token_max_ttl=24h \
+    secret_id_ttl=0 secret_id_num_uses=0 \
+    secret_id_bound_cidrs="<APP_SERVER_IP>/32"
+
+vault read  -field=role_id   auth/approle/role/sd-advisor/role-id
+vault write -f -field=secret_id auth/approle/role/sd-advisor/secret-id
+```
+
+Write those to `config/.vault_role_id` and `config/.vault_secret_id` at mode
+600, then set `vault.auth_method: "approle"`. No `.vault_token` is needed —
+set `vault.approle.write_token_file: true` only if external tooling expects
+one. Full walkthrough in §7.4 of the deployment guide.
+
 Use a **separate Vault token** from the audit tool, scoped to these paths only.
 
 ### ServiceNow permissions

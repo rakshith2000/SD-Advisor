@@ -48,16 +48,27 @@ else
   echo "config/conf.json already present, leaving it alone."
 fi
 
-if [[ ! -f config/.vault_token ]]; then
+if [[ ! -f config/.vault_role_id || ! -f config/.vault_secret_id ]]; then
   echo
-  echo "No config/.vault_token found."
-  echo "Copy the advisor's own Vault token there (do NOT reuse the audit tool's token):"
-  echo "    install -m 600 /dev/stdin config/.vault_token <<< 'hvs....'"
+  echo "AppRole credentials are missing. Create the role on the Vault server:"
+  echo "    vault auth enable approle"
+  echo "    vault write auth/approle/role/sd-advisor \\"
+  echo "        token_policies=sd-advisor token_ttl=1h token_max_ttl=24h \\"
+  echo "        secret_id_ttl=0 secret_id_num_uses=0 \\"
+  echo "        secret_id_bound_cidrs=\"\$(hostname -I | awk '{print \$1}')/32\""
+  echo
+  echo "Then install both credentials here (do NOT reuse the audit tool's token):"
+  echo "    install -m 600 /dev/stdin config/.vault_role_id   <<< '<ROLE_ID>'"
+  echo "    install -m 600 /dev/stdin config/.vault_secret_id <<< '<SECRET_ID>'"
+  echo
+  echo "Set vault.auth_method to 'approle' in config/conf.json."
 fi
 
 mkdir -p logs
 chmod 700 config logs 2>/dev/null || true
-[[ -f config/.vault_token ]] && chmod 600 config/.vault_token
+for f in config/.vault_token config/.vault_role_id config/.vault_secret_id; do
+  [[ -f "$f" ]] && chmod 600 "$f"
+done
 
 # ---------------------------------------------------------------------------
 say "Creating the database schema"

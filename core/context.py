@@ -147,6 +147,11 @@ class AppContext:
                 self.audit_db.close()
             except Exception:
                 pass
+        try:
+            # Stops the background token renewer.
+            self.vault.close()
+        except Exception:
+            pass
 
 
 def get_context(config_path: Optional[str] = None) -> AppContext:

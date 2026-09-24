@@ -241,8 +241,25 @@ def cmd_doctor(args) -> int:
             raise RuntimeError('Azure OpenAI unreachable - recommendations would fall back to rules')
         return f'reachable ({ctx.llm.chat_deployment})'
 
+    def vault_check():
+        status = ctx.vault.auth_status()
+        if status.get('error'):
+            raise RuntimeError(status['error'])
+
+        detail = f"auth={status['method']}"
+        ttl = status.get('ttl_seconds')
+        if ttl:
+            detail += f", token expires in {ttl / 3600.0:.1f}h"
+            if status['method'] == 'token' and ttl < 7 * 86400:
+                detail += ' (STATIC TOKEN - switch to approle)'
+        if status['method'] == 'approle':
+            if not status.get('renewer_running'):
+                raise RuntimeError('AppRole renewer thread is not running')
+            detail += ', auto-renewal active'
+        return detail
+
     check('config', lambda: f'loaded {ctx.settings.path}')
-    check('vault', lambda: 'authenticated')
+    check('vault', vault_check)
     check('database', lambda: (
         f"{ctx.db.query_one('SELECT COUNT(*) AS n FROM watched_ticket')['n']} tracked tickets"))
     check('servicenow', lambda: (

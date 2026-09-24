@@ -158,7 +158,8 @@ g.table(['Resource', 'Existing Ticket Audit tool', 'Aged Ticket Advisor (new)'],
     ['Install directory', '/genai/etc/scripts/itsm_analytics', '/genai/etc/scripts/aged_ticket_advisor'],
     ['MySQL database', 'itsm_analytics_db', 'sd_advisor_db'],
     ['MySQL user', '(existing)', 'sd_advisor (new)'],
-    ['Vault token file', 'itsm_analytics/config/.vault_token', 'aged_ticket_advisor/config/.vault_token'],
+    ['Vault credentials', 'itsm_analytics/config/.vault_token (static)',
+     'aged_ticket_advisor/config/.vault_role_id + .vault_secret_id (AppRole)'],
     ['Vault secret paths', 'itsm_analytics_db, <itsm_tag>', 'sd_advisor_* (new paths)'],
     ['TCP port', '8443 (Flask front end)', '8444 (FastAPI)'],
     ['Scheduling', 'cron 04:00 daily', 'systemd long-running service'],
@@ -229,8 +230,9 @@ g.table(['System', 'Access level', 'Used for'], [
      'Deploy code, install the service unit'],
     ['MySQL', 'An account that can CREATE DATABASE and GRANT',
      'Create sd_advisor_db and its user (once)'],
-    ['Vault', 'A token that can write to secret/sd_advisor_* and create policies',
-     'Store the five credential sets'],
+    ['Vault', 'A token that can write to secret/sd_advisor_*, create policies, and enable '
+              'and configure the approle auth method',
+     'Store credentials and set up AppRole authentication'],
     ['ServiceNow', 'Admin or an account able to create an integration user and assign roles',
      'Create the read-only integration account'],
     ['Azure OpenAI', 'Access to the resource, or the endpoint/key from whoever owns it',
@@ -641,7 +643,7 @@ g.callout('warn', 'KV mount path.',
           '"vault secrets list". If it is mounted elsewhere, adjust both the policy paths and '
           'the path arguments in the commands below.')
 
-g.h2('7.3 Write the five secrets')
+g.h2('7.3 Write the secrets')
 g.p('Note the format difference: the database and ServiceNow secrets are stored as a single '
     'username=password pair (matching how the existing estate stores them), while the others '
     'use explicit named keys.')
@@ -677,37 +679,216 @@ g.callout('crit', 'Credential-pair format matters.',
           'accepts both — but writing any other combination of keys will fail with '
           '"expected a single username:password pair".')
 
-g.h2('7.4 Create the advisor\'s own Vault token')
-g.code("""vault token create \\
-    -policy=sd-advisor \\
-    -period=768h \\
-    -display-name=aged-ticket-advisor \\
-    -format=json | python3 -c 'import json,sys; print(json.load(sys.stdin)["auth"]["client_token"])'
-""")
-g.p('Write the token to the advisor\'s own token file — do not reuse or symlink the audit '
-    'tool\'s token:')
-g.code("""sudo -u genai install -m 600 /dev/stdin \\
-    /genai/etc/scripts/aged_ticket_advisor/config/.vault_token <<< '<PASTE_TOKEN>'
+g.h2('7.4 Authentication: AppRole (recommended)')
 
-ls -l /genai/etc/scripts/aged_ticket_advisor/config/.vault_token
-# Must show -rw------- and be owned by genai""")
+g.p('A static token has to be renewed by something, and when that something is forgotten the '
+    'service fails at 03:00 on a Sunday. AppRole removes the problem: the service exchanges '
+    'a role_id and secret_id for a short-lived token at startup, renews it on a background '
+    'thread, and logs in again automatically when the token reaches its maximum lifetime or '
+    'is revoked.')
 
-g.callout('warn', 'Periodic token renewal.',
-          'A period of 768h (32 days) means the token must be renewed before it expires. '
-          'Either add a renewal cron entry (vault token renew), or use a Vault AppRole for '
-          'unattended renewal. Section 21.3 covers monitoring for this.')
+g.table(['', 'Static token', 'AppRole'], [
+    ['On disk', 'A live token', 'role_id + secret_id (credentials, not a session)'],
+    ['Lifetime', 'Fixed; expires', 'Token TTL 1h, renewed automatically, unlimited re-login'],
+    ['Renewal', 'Your problem — cron or manual', 'Built in, no external moving parts'],
+    ['If leaked', 'Immediate access until expiry or revocation', 'Can be CIDR-bound to the '
+                                                                 'app server; secret_id revocable'],
+    ['Revocation', 'Revoke the token', 'Revoke the secret_id; the role survives'],
+], widths=[2.8, 6.4, 7.2])
 
-g.h2('7.5 Verify the token can read exactly what it should')
-g.code("""export VAULT_TOKEN=$(sudo cat /genai/etc/scripts/aged_ticket_advisor/config/.vault_token)
+g.h3('Step 1 — enable the auth method')
+g.code("""vault auth list | grep -q '^approle/' || vault auth enable approle""")
 
-vault kv get secret/sd_advisor_db     # should succeed
-vault kv get secret/sd_advisor_llm    # should succeed
-vault kv get secret/snow_advisor      # should succeed
-vault kv get secret/itsm_analytics_db # MUST fail with permission denied
+g.h3('Step 2 — create the role')
+g.code("""vault write auth/approle/role/sd-advisor \\
+    token_policies="sd-advisor" \\
+    token_ttl=1h \\
+    token_max_ttl=24h \\
+    secret_id_ttl=0 \\
+    secret_id_num_uses=0 \\
+    token_num_uses=0 \\
+    bind_secret_id=true \\
+    secret_id_bound_cidrs="<APP_SERVER_IP>/32" \\
+    token_bound_cidrs="<APP_SERVER_IP>/32" """)
 
+g.table(['Parameter', 'Value', 'Why'], [
+    ['token_ttl', '1h', 'Short-lived. Renewed automatically at the halfway point'],
+    ['token_max_ttl', '24h', 'After this the token cannot be renewed further, so the client '
+                             'logs in again. This is normal and handled silently'],
+    ['secret_id_ttl', '0', 'The secret_id itself does not expire. Set a TTL only if you have '
+                           'a rotation process — see Section 7.8'],
+    ['secret_id_num_uses', '0', 'Unlimited logins. The service re-logs-in on every restart '
+                                'and at every max_ttl boundary'],
+    ['token_num_uses', '0', 'Unlimited API calls per token'],
+    ['secret_id_bound_cidrs', 'App server /32', 'The secret_id is unusable from anywhere '
+                                                'else. This is the single most valuable '
+                                                'hardening on this page'],
+    ['token_bound_cidrs', 'App server /32', 'Same protection for the issued token'],
+], widths=[3.8, 2.8, 9.8], code_cols=(0,))
+
+g.callout('warn', 'Set the CIDR bindings.',
+          'The secret_id is long-lived and sits on disk, so it is the credential worth '
+          'protecting. Binding it to the application server\'s address means a copy taken '
+          'off the box cannot be used. Find the address with "hostname -I" and use a /32.')
+
+g.h3('Step 3 — fetch the role_id and generate a secret_id')
+g.code("""# role_id is stable and not itself a secret, but treat it as one
+vault read -field=role_id auth/approle/role/sd-advisor/role-id
+
+# secret_id IS a secret. It is shown once and cannot be retrieved again.
+vault write -f -field=secret_id auth/approle/role/sd-advisor/secret-id""")
+
+g.h3('Step 4 — install both on the application server')
+g.code("""BASE=/genai/etc/scripts/aged_ticket_advisor
+
+sudo -u genai install -m 600 /dev/stdin $BASE/config/.vault_role_id   <<< '<ROLE_ID>'
+sudo -u genai install -m 600 /dev/stdin $BASE/config/.vault_secret_id <<< '<SECRET_ID>'
+
+ls -l $BASE/config/.vault_role_id $BASE/config/.vault_secret_id
+# Both must show -rw------- and be owned by genai""")
+
+g.callout('info', 'No .vault_token file is needed.',
+          'In AppRole mode the service never reads one. If existing operational tooling '
+          'expects a token on disk, set vault.approle.write_token_file to true and the live '
+          'token is mirrored to config/.vault_token atomically at mode 600 on every login '
+          'and renewal. Leave it false otherwise — a token on disk is precisely what AppRole '
+          'exists to avoid.')
+
+g.h3('Step 5 — point conf.json at AppRole')
+g.code(""""vault": {
+    "url": "https://127.0.0.1:8200",
+    "auth_method": "approle",
+    "verify_tls": true,
+    "ca_bundle": "/opt/vault/tls/tls.crt",
+
+    "token_file": "config/.vault_token",
+
+    "approle": {
+        "role_id_file": "config/.vault_role_id",
+        "secret_id_file": "config/.vault_secret_id",
+        "write_token_file": false,
+        "renew_ratio": 0.5,
+        "min_renew_seconds": 60
+    },
+
+    "paths": { "...": "unchanged" }
+}""")
+g.table(['Key', 'Default', 'Meaning'], [
+    ['auth_method', 'token', 'Set to approle to enable everything on this page'],
+    ['approle.role_id_file', 'config/.vault_role_id', 'Path to the role_id'],
+    ['approle.secret_id_file', 'config/.vault_secret_id', 'Path to the secret_id'],
+    ['approle.write_token_file', 'false', 'Mirror the live token to token_file for external '
+                                          'tooling. The app never reads it back'],
+    ['approle.renew_ratio', '0.5', 'Renew when this fraction of the lease has elapsed. '
+                                   '0.5 of a 1h TTL is every 30 minutes'],
+    ['approle.min_renew_seconds', '60', 'Floor on the renewal interval, so a very short '
+                                        'lease cannot cause a busy loop'],
+], widths=[4.2, 3.4, 8.8], code_cols=(0,))
+
+g.h2('7.5 What the service does at runtime')
+g.code("""startup
+  read role_id + secret_id  ->  POST auth/approle/login  ->  token (ttl 1h)
+  start the 'vault-token-renewer' background thread
+  [if write_token_file] mirror the token to config/.vault_token
+
+every 30 minutes (ttl x renew_ratio)
+  POST auth/token/renew-self
+     success  ->  new lease, carry on
+     declined ->  max_ttl reached or token revoked  ->  log in again
+
+on failure (Vault unreachable)
+  log an error, retry in 60s
+  cached secrets keep working, so the service degrades rather than stopping
+
+on shutdown
+  the renewer thread is stopped cleanly""")
+
+g.callout('good', 'A Vault outage does not stop the service.',
+          'Every secret is cached in process after first read, so an unreachable Vault '
+          'affects renewal only. The pipeline keeps running on cached credentials and '
+          'recovers automatically when Vault returns.')
+
+g.h2('7.6 Verify')
+g.p('First, confirm the policy grants exactly what it should and nothing more:')
+g.code("""# Log in the same way the service will, and test the boundaries
+ROLE_ID=$(sudo cat /genai/etc/scripts/aged_ticket_advisor/config/.vault_role_id)
+SECRET_ID=$(sudo cat /genai/etc/scripts/aged_ticket_advisor/config/.vault_secret_id)
+
+export VAULT_TOKEN=$(vault write -field=token auth/approle/login \\
+    role_id="$ROLE_ID" secret_id="$SECRET_ID")
+
+vault kv get secret/sd_advisor_db      # should succeed
+vault kv get secret/sd_advisor_llm     # should succeed
+vault kv get secret/snow_advisor       # should succeed
+vault kv get secret/itsm_analytics_db  # MUST fail with permission denied
+
+vault token lookup | grep -E 'ttl|renewable|policies'
 unset VAULT_TOKEN""")
-g.p('The final command failing is the point of the exercise: it proves the advisor cannot '
+g.p('The fourth command failing is the point of the exercise: it proves the advisor cannot '
     'reach the audit tool\'s credentials.')
+
+g.p('Then confirm the application agrees:')
+g.code("""cd /genai/etc/scripts/aged_ticket_advisor
+python run.py doctor | grep vault
+
+# PASS  vault   auth=approle, token expires in 1.0h, auto-renewal active""")
+
+g.p('Finally, watch a renewal actually happen. With a 1h TTL the first one occurs about '
+    'thirty minutes after start-up:')
+g.code("""sudo journalctl -u aged-ticket-advisor -f | grep -i vault
+
+# Vault session established (https://127.0.0.1:8200, auth=approle)
+# AppRole login succeeded (ttl=3600s, renewable=True, policies=default,sd-advisor)
+# Vault token renewer started (first refresh in ~1800s)
+# ... 30 minutes later ...
+# Vault token renewed (ttl=3600s)""")
+
+g.callout('info', 'Want to see it sooner?',
+          'Temporarily set token_ttl=5m on the role and restart the service. The renewer '
+          'floor is 60s, so you will see a renewal within about two and a half minutes, and '
+          'a full re-login once max_ttl is reached. Put the TTL back afterwards.')
+
+g.h2('7.7 Rotating the secret_id')
+g.p('With secret_id_ttl=0 the credential does not expire, so rotation is a scheduled hygiene '
+    'task rather than an operational necessity. To rotate without downtime:')
+g.code("""# 1. Generate a replacement (the old one stays valid for now)
+NEW_SECRET_ID=$(vault write -f -field=secret_id auth/approle/role/sd-advisor/secret-id)
+
+# 2. Install it
+sudo -u genai install -m 600 /dev/stdin \\
+    /genai/etc/scripts/aged_ticket_advisor/config/.vault_secret_id <<< "$NEW_SECRET_ID"
+
+# 3. Restart so the next login uses it
+sudo systemctl restart aged-ticket-advisor
+python run.py doctor | grep vault
+
+# 4. Only once that is healthy, destroy the old secret_id
+vault list auth/approle/role/sd-advisor/secret-id
+vault write auth/approle/role/sd-advisor/secret-id-accessor/destroy \\
+    secret_id_accessor="<OLD_ACCESSOR>" """)
+g.callout('warn', 'Restart is required.',
+          'The secret_id is read at login, not on every renewal, so replacing the file alone '
+          'changes nothing until the service restarts or reaches max_ttl. Steps 3 and 4 are '
+          'in that order deliberately — do not destroy the old credential until the new one '
+          'is proven.')
+
+g.h3('If you prefer an expiring secret_id')
+g.p('Set secret_id_ttl (say 90d) and schedule the rotation above. The trade-off is that a '
+    'missed rotation becomes an outage, which is the failure mode AppRole was adopted to '
+    'avoid — so only do this if the rotation is automated and monitored.')
+
+g.h2('7.8 Fallback: static token')
+g.p('For a quick trial, or if AppRole cannot be enabled on your Vault, the original method '
+    'still works. Set auth_method to token and provide config/.vault_token:')
+g.code("""vault token create -policy=sd-advisor -period=768h \\
+    -display-name=aged-ticket-advisor -field=token \\
+  | sudo -u genai install -m 600 /dev/stdin \\
+      /genai/etc/scripts/aged_ticket_advisor/config/.vault_token""")
+g.code(""""vault": { "auth_method": "token", "token_file": "config/.vault_token" }""")
+g.callout('warn', 'You now own the renewal.',
+          'A 768h period means the token must be renewed within 32 days or the service stops '
+          'reading secrets. doctor warns when a static token has under 7 days left, and '
+          'Section 21.3 lists it as a monthly task — but AppRole removes the task entirely.')
 
 
 # =========================================================== SECTION 8 =====
@@ -1209,7 +1390,7 @@ python run.py doctor""")
 
 g.p('Expected output on a correctly configured system:')
 g.code("""PASS  config                loaded /genai/etc/scripts/aged_ticket_advisor/config/conf.json
-PASS  vault                 authenticated
+PASS  vault                 auth=approle, token expires in 1.0h, auto-renewal active
 PASS  database              0 tracked tickets
 PASS  servicenow            137 aged open
 PASS  llm                   reachable (gpt-4o)
@@ -1232,8 +1413,9 @@ g.p('Every row should show a SOURCE of config:sys_id. Anything reporting name-to
 g.h2('12.1 Interpreting failures')
 g.table(['Failing check', 'Most likely cause', 'Resolution'], [
     ['config', 'conf.json missing or malformed', 'Section 11.1 and 11.4'],
-    ['vault', 'Token file missing, wrong permissions, expired token, or Vault sealed',
-     'Section 7.4 and 7.5; check "vault status"'],
+    ['vault', 'role_id/secret_id missing or unreadable, CIDR binding rejects this host, '
+              'approle not enabled, or Vault sealed',
+     'Section 7.4 and 7.6; check "vault status"'],
     ['database', 'Wrong credentials in Vault, schema not applied, or user lacks grants',
      'Section 6.1 and 6.2; confirm the Vault key is the username'],
     ['servicenow', 'Bad credentials, missing table ACL, or TLS trust failure',
@@ -1776,7 +1958,8 @@ g.table(['Check', 'Where'], [
 
 g.h2('21.3 Monthly checks')
 g.table(['Task', 'Why'], [
-    ['Renew the Vault token', 'A 768h period means expiry within about 32 days'],
+    ['(AppRole) nothing — renewal is automatic', 'Confirm with: run.py doctor | grep vault'],
+    ['(Static token only) renew it', 'A 768h period means expiry within about 32 days'],
     ['Rotate the ServiceNow integration password', 'Standard credential hygiene'],
     ['Review the system-account list', 'New integrations appear over time and silently skew the idle clock'],
     ['Review the attention weights with the leads', 'Priorities drift'],
@@ -1827,8 +2010,15 @@ g.h2('22.1 Service will not start')
 g.table(['Symptom', 'Cause', 'Fix'], [
     ['Exits immediately, ExecStartPre failed', 'doctor is failing',
      'Run it manually as the genai user and read the output'],
-    ['Permission denied on the Vault token', 'Wrong file owner or mode',
-     'chown genai and chmod 600'],
+    ['Permission denied on a Vault credential file', 'Wrong file owner or mode',
+     'chown genai and chmod 600 on .vault_role_id and .vault_secret_id'],
+    ['AppRole login failed: invalid role or secret ID', 'secret_id destroyed, expired, or '
+     'the CIDR binding rejects this host',
+     'Generate a new secret_id (Section 7.7); check secret_id_bound_cidrs matches the '
+     'server address'],
+    ['Repeated "logging in again" in the log', 'token_max_ttl is very short relative to '
+     'token_ttl', 'Expected at each max_ttl boundary; frequent enough to be noisy means '
+                  'the role TTLs need widening'],
     ['Address already in use', 'Port 8444 taken', 'ss -tlnp | grep 8444'],
     ['ModuleNotFoundError', 'Wrong virtual environment in the unit file',
      'Check the ExecStart path'],
@@ -1948,6 +2138,7 @@ mysql -u <admin> -p -e "
   DROP USER 'sd_advisor'@'localhost';"
 
 # 4. Revoke the Vault credentials
+vault delete auth/approle/role/sd-advisor
 vault kv metadata delete secret/sd_advisor_db
 vault kv metadata delete secret/sd_advisor_llm
 vault kv metadata delete secret/sd_advisor_web
@@ -1978,6 +2169,7 @@ g.table(['#', 'Value', 'Where it comes from', 'Your value'], [
     ['5', 'MySQL password for sd_advisor', 'Generated in Section 6.1', 'in Vault'],
     ['6', 'Vault URL', 'qa_conf.json → vault_url', ''],
     ['7', 'Vault CA bundle path', 'startup_services.sh', ''],
+    ['7b', 'App server IP (for the AppRole CIDR binding)', 'hostname -I', ''],
     ['8', 'ServiceNow instance URL', 'itsm_configuration_table.itsm_url', ''],
     ['9', 'ServiceNow integration user', 'Created in Section 8.1', ''],
     ['10', 'ServiceNow password', 'Generated in Section 8.1', 'in Vault'],
@@ -2002,7 +2194,13 @@ g.h1('Appendix B — Complete configuration key reference')
 g.table(['Key', 'Type', 'Default', 'Required'], [
     ['customer_name', 'string', '—', 'Yes'],
     ['vault.url', 'string', '—', 'Yes'],
-    ['vault.token_file', 'path', 'config/.vault_token', 'Yes'],
+    ['vault.auth_method', 'token | approle', 'token', 'Recommended: approle'],
+    ['vault.token_file', 'path', 'config/.vault_token', 'Only if auth_method is token'],
+    ['vault.approle.role_id_file', 'path', 'config/.vault_role_id', 'If auth_method is approle'],
+    ['vault.approle.secret_id_file', 'path', 'config/.vault_secret_id', 'If auth_method is approle'],
+    ['vault.approle.write_token_file', 'bool', 'false', 'No'],
+    ['vault.approle.renew_ratio', 'float', '0.5', 'No'],
+    ['vault.approle.min_renew_seconds', 'int', '60', 'No'],
     ['vault.verify_tls', 'bool', 'true', 'No'],
     ['vault.ca_bundle', 'path', '—', 'No'],
     ['vault.paths.database', 'string', 'sd_advisor_db', 'Yes'],
@@ -2079,7 +2277,12 @@ g.h1('Appendix D — Security checklist')
 g.checklist([
     ('Service runs as an unprivileged account, not root', 'systemctl show -p User aged-ticket-advisor'),
     ('config directory is mode 700', 'ls -ld config'),
-    ('.vault_token is mode 600 and owned by the service account', 'ls -l config/.vault_token'),
+    ('AppRole is in use rather than a static token', 'run.py doctor | grep vault'),
+    ('.vault_role_id and .vault_secret_id are mode 600, owned by the service account',
+     'ls -l config/.vault_*'),
+    ('The secret_id is CIDR-bound to this server',
+     'vault read auth/approle/role/sd-advisor'),
+    ('Automatic renewal is running', 'journalctl -u aged-ticket-advisor | grep "token renew"'),
     ('conf.json is mode 600', 'ls -l config/conf.json'),
     ('Vault policy grants the advisor no access to audit-tool secrets', 'Section 7.5'),
     ('ServiceNow account has snc_read_only or equivalent', 'ServiceNow user record'),
@@ -2097,7 +2300,8 @@ g.table(['Phase', 'Sections', 'Completed by', 'Date', 'Notes'], [
     ['Environment discovery', '3', '', '', ''],
     ['Code deployed', '4–5', '', '', ''],
     ['Database configured', '6', '', '', ''],
-    ['Vault configured', '7', '', '', ''],
+    ['Vault secrets written', '7.1-7.3', '', '', ''],
+    ['AppRole configured and renewing', '7.4-7.6', '', '', ''],
     ['ServiceNow configured', '8', '', '', ''],
     ['Azure OpenAI configured', '9', '', '', ''],
     ['SMTP configured', '10', '', '', ''],
@@ -2118,9 +2322,17 @@ g.p('Print this page and keep it near the console.', italic=True, color=MUTED)
 g.code("""PATHS
   Project        /genai/etc/scripts/aged_ticket_advisor
   Config         config/conf.json
-  Vault token    config/.vault_token
+  Vault AppRole  config/.vault_role_id  +  config/.vault_secret_id
   Logs           logs/advisor.log
   Schema         db/schema.sql
+
+VAULT (AppRole - renewal is automatic, nothing to schedule)
+  python run.py doctor | grep vault
+  journalctl -u aged-ticket-advisor | grep -i vault
+  Rotate secret_id:
+    NEW=$(vault write -f -field=secret_id auth/approle/role/sd-advisor/secret-id)
+    install -m 600 /dev/stdin config/.vault_secret_id <<< "$NEW"
+    systemctl restart aged-ticket-advisor      # then destroy the old accessor
 
 SERVICE
   systemctl {start|stop|restart|status} aged-ticket-advisor
