@@ -258,8 +258,26 @@ def cmd_doctor(args) -> int:
             detail += ', auto-renewal active'
         return detail
 
+    def web_check():
+        base = str(ctx.settings.get('web.base_url', '')).rstrip('/')
+        host = ctx.settings.get('web.host', '0.0.0.0')
+        port = ctx.settings.get('web.port', 8444)
+
+        if not base:
+            raise RuntimeError(
+                'web.base_url is empty - digest emails would be sent with no links back '
+                'to the board')
+
+        detail = f'{base} (serving {host}:{port})'
+        if not base.lower().startswith('https'):
+            # Not fatal - plain HTTP is a reasonable trial setup on an internal
+            # network - but leads log in with a password, so say so plainly.
+            detail += '  [HTTP: login credentials and session cookie are sent in cleartext]'
+        return detail
+
     check('config', lambda: f'loaded {ctx.settings.path}')
     check('vault', vault_check)
+    check('web url', web_check)
     check('database', lambda: (
         f"{ctx.db.query_one('SELECT COUNT(*) AS n FROM watched_ticket')['n']} tracked tickets"))
     check('servicenow', lambda: (

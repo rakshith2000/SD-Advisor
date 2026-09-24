@@ -132,7 +132,10 @@
     },
 
     "web": {
-        "base_url": "https://kohlerco.com:8444",
+        "_comment_base_url": "The absolute URL leads' browsers will use. It is written into every digest email link, and its scheme decides whether the session cookie is marked Secure. Must resolve from the LEAD'S workstation, not from this server. Prefer an FQDN over a raw IP so email links survive an address change.",
+        "_comment_http": "http:// is fine for the shadow-mode trial on an internal network, but leads log in with a password, so that password and their session cookie cross the network in cleartext. Put nginx in front (deployment guide 17.3) before go-live: base_url https://host:8444, host 127.0.0.1, port 8445.",
+
+        "base_url": "http://uswix865.kohlerco.com:8444",
         "host": "0.0.0.0",
         "port": 8444,
         "session_cookie": "ata_session",
