@@ -326,13 +326,34 @@ def cmd_doctor(args) -> int:
             detail += '  [HTTP: login credentials and session cookie are sent in cleartext]'
         return detail
 
+    def groups_check():
+        configured = ctx.settings.assignment_groups
+        if not configured:
+            return 'no filter configured - EVERY assignment group is in scope'
+
+        unknown = ctx.incidents.unresolvable_groups()
+        if unknown:
+            raise RuntimeError(
+                f'{unknown} do not match any active sys_user_group name exactly. '
+                f'Every incident query is silently returning zero rows. '
+                f'Find the real names with: python ops/find_groups.py "<term>"')
+        return f'{len(configured)} group(s) resolved: {", ".join(configured)}'
+
     check('config', lambda: f'loaded {ctx.settings.path}')
     check('vault', vault_check)
     check('web url', web_check)
+    check('snow groups', groups_check)
     check('database', lambda: (
         f"{ctx.db.query_one('SELECT COUNT(*) AS n FROM watched_ticket')['n']} tracked tickets"))
-    check('servicenow', lambda: (
-        f"{len(ctx.incidents.get_aged_open_incidents(ctx.settings.aged_after_days))} aged open"))
+    def snow_check():
+        aged = len(ctx.incidents.get_aged_open_incidents(ctx.settings.aged_after_days))
+        detail = f'{aged} aged open'
+        if not ctx.incidents.sample_resolved_within(30):
+            detail += ('; NO incidents resolved in the last 30 days in scope - '
+                       'backfill would index nothing')
+        return detail
+
+    check('servicenow', snow_check)
     check('llm', llm_check)
     check('vector index', lambda: (
         f"{ctx.index.load('incident')} incidents, {ctx.index.load('kb')} KB articles"))

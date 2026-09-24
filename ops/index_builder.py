@@ -10,7 +10,7 @@ import datetime
 from typing import Any, Dict, List, Optional
 
 from core.logging_setup import get_logger
-from core.snow.base import parse_ts
+from core.snow.base import display_value, parse_ts
 from pipeline.retrieval import (INCIDENT, KB, incident_document, kb_document,
                                 refresh_resolution_stats, text_hash)
 
@@ -35,28 +35,37 @@ class IndexBuilder:
         records = []
         for row in raw:
             opened = parse_ts(row.get('opened_at')) or parse_ts(row.get('sys_created_on'))
-            resolved = parse_ts(row.get('resolved_at'))
+            # Migrated and bulk-closed records often carry no resolved_at even
+            # though state says Resolved; closed_at is the next best stamp.
+            resolved = parse_ts(row.get('resolved_at')) or parse_ts(row.get('closed_at'))
             hours = (round((resolved - opened).total_seconds() / 3600.0, 2)
                      if opened and resolved and resolved > opened else None)
 
-            group = row.get('assignment_group')
             records.append({
                 'number': (row.get('number') or '').strip(),
                 'short_description': (row.get('short_description') or '').strip(),
                 'description': row.get('description') or '',
-                'category': (row.get('category') or '').strip(),
-                'subcategory': (row.get('subcategory') or '').strip(),
-                'ci': (group.get('display_value') if isinstance(row.get('cmdb_ci'), dict)
-                       else row.get('cmdb_ci')) or '',
-                'close_code': (row.get('close_code') or '').strip(),
+                'category': display_value(row.get('category')),
+                'subcategory': display_value(row.get('subcategory')),
+                'ci': display_value(row.get('cmdb_ci')),
+                'close_code': display_value(row.get('close_code')),
                 'close_notes': (row.get('close_notes') or '').strip(),
-                'assignment_group': (group.get('display_value')
-                                     if isinstance(group, dict) else group) or '',
+                'assignment_group': display_value(row.get('assignment_group')),
                 'resolution_hours': hours,
             })
 
-        log.info('Fetched %d resolved incidents', len(records))
-        return [r for r in records if r['number']]
+        records = [r for r in records if r['number']]
+
+        if not records:
+            log.warning(
+                'Fetched 0 resolved incidents for %s..%s. The window is not empty by '
+                'itself - check servicenow.assignment_groups matches sys_user_group.name '
+                'exactly (run ops/find_groups.py); a near-miss returns zero rows silently.',
+                start.date(), end.date())
+        else:
+            log.info('Fetched %d resolved incidents', len(records))
+
+        return records
 
     def index_resolved_incidents(self, days: int = 180,
                                  records: Optional[List[Dict[str, Any]]] = None) -> int:

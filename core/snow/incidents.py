@@ -4,7 +4,7 @@ import datetime
 from typing import Any, Dict, List, Optional
 
 from core.logging_setup import get_logger
-from core.snow.base import ServiceNowClient, js_date
+from core.snow.base import ServiceNowClient, display_value, js_date
 
 log = get_logger('core.snow.incidents')
 
@@ -36,6 +36,27 @@ class IncidentReader:
         if not self.assignment_groups:
             return ''
         return '^assignment_groupIN' + ','.join(self.assignment_groups)
+
+    def unresolvable_groups(self) -> List[str]:
+        """Configured group names with no exactly-matching active sys_user_group.
+
+        assignment_groupIN matches on the exact name. A near-miss - 'Service
+        Desk' where the group is really 'IT Service Desk' - narrows every
+        incident query to nothing and returns HTTP 200 with an empty result,
+        so it presents as "no tickets today" rather than as an error. Worth
+        one extra call at startup to turn that into a loud failure.
+        """
+        if not self.assignment_groups:
+            return []
+
+        rows = self.client.get('sys_user_group', {
+            'sysparm_query': 'active=true^nameIN' + ','.join(self.assignment_groups),
+            'sysparm_fields': 'name',
+            'sysparm_display_value': 'true',
+            'sysparm_limit': len(self.assignment_groups) + 10,
+        })
+        found = {display_value(r.get('name')) for r in rows}
+        return [g for g in self.assignment_groups if g not in found]
 
     # -- aged backlog ------------------------------------------------------
 
@@ -99,6 +120,21 @@ class IncidentReader:
             'sysparm_query': query,
             'sysparm_fields': INCIDENT_FIELDS,
             'sysparm_display_value': 'true',
+        })
+
+    def sample_resolved_within(self, days: int, limit: int = 1) -> List[Dict[str, Any]]:
+        """Cheap existence probe for the backfill window - one page, no paging.
+
+        Lets `doctor` distinguish "the backfill indexed nothing because there is
+        nothing to index" from "the backfill indexed nothing because the query
+        is wrong", which a zero return value alone cannot.
+        """
+        return self.client.get('incident', {
+            'sysparm_query': (f'stateIN{CLOSED_STATES}'
+                              f'^resolved_atRELATIVEGE@day@ago@{int(days)}'
+                              f'{self._group_clause()}'),
+            'sysparm_fields': 'number',
+            'sysparm_limit': limit,
         })
 
     # -- history -----------------------------------------------------------
