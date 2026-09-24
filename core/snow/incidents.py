@@ -33,14 +33,25 @@ class IncidentReader:
     # -- scope helpers -----------------------------------------------------
 
     def _group_clause(self) -> str:
+        """Scope to the configured queues, dot-walking to the group's name.
+
+        assignment_group stores a sys_id, so `assignment_groupIN Service Desk`
+        compares a 32-character hex string against a display name and matches
+        nothing, whatever the name is. Dot-walking with `assignment_group.name`
+        joins to sys_user_group and compares the name for real.
+
+        (LIKE is the exception - CONTAINS on a reference field resolves to the
+        display value - which is why a substring probe appears to work while
+        the equality form silently returns nothing.)
+        """
         if not self.assignment_groups:
             return ''
-        return '^assignment_groupIN' + ','.join(self.assignment_groups)
+        return '^assignment_group.nameIN' + ','.join(self.assignment_groups)
 
     def unresolvable_groups(self) -> List[str]:
         """Configured group names with no exactly-matching active sys_user_group.
 
-        assignment_groupIN matches on the exact name. A near-miss - 'Service
+        The scope clause matches on the exact name. A near-miss - 'Service
         Desk' where the group is really 'IT Service Desk' - narrows every
         incident query to nothing and returns HTTP 200 with an empty result,
         so it presents as "no tickets today" rather than as an error. Worth
@@ -122,16 +133,25 @@ class IncidentReader:
             'sysparm_display_value': 'true',
         })
 
-    def sample_resolved_within(self, days: int, limit: int = 1) -> List[Dict[str, Any]]:
+    def sample_resolved_within(self, days: int, limit: int = 1,
+                               now: Optional[datetime.datetime] = None
+                               ) -> List[Dict[str, Any]]:
         """Cheap existence probe for the backfill window - one page, no paging.
 
         Lets `doctor` distinguish "the backfill indexed nothing because there is
         nothing to index" from "the backfill indexed nothing because the query
         is wrong", which a zero return value alone cannot.
+
+        Deliberately mirrors get_closed_between's clause shape rather than using
+        the shorter RELATIVEGE form: an unparseable condition is *dropped* by
+        ServiceNow, not rejected, so a probe built on syntax the instance does
+        not recognise would match every record and always pass.
         """
+        now = now or datetime.datetime.now()
+        cutoff = now - datetime.timedelta(days=days)
         return self.client.get('incident', {
             'sysparm_query': (f'stateIN{CLOSED_STATES}'
-                              f'^resolved_atRELATIVEGE@day@ago@{int(days)}'
+                              f'^resolved_at>={js_date(cutoff)}'
                               f'{self._group_clause()}'),
             'sysparm_fields': 'number',
             'sysparm_limit': limit,

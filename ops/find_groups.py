@@ -2,8 +2,8 @@
 """List assignment groups matching a term, with their open/closed volumes.
 
 servicenow.assignment_groups must hold names that match sys_user_group.name
-EXACTLY - the encoded query uses assignment_groupIN, and a near-miss returns
-zero rows silently rather than erroring.
+EXACTLY - the scope clause dot-walks with assignment_group.nameIN, and a
+near-miss returns zero rows silently rather than erroring.
 
     python ops/find_groups.py "Service Desk"
 
@@ -11,6 +11,7 @@ Read-only.
 """
 
 import argparse
+import datetime
 import sys
 from pathlib import Path
 
@@ -19,6 +20,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from core.context import get_context                        # noqa: E402
+from core.snow.base import js_date                          # noqa: E402
 
 
 def main() -> int:
@@ -44,12 +46,15 @@ def main() -> int:
     print(f'{len(groups)} active group(s) matching {args.term!r}:')
     print()
 
+    cutoff = js_date(datetime.datetime.now() - datetime.timedelta(days=30))
+
     rows = []
     for group in groups:
         name = group.get('name') or ''
-        open_count = _count(client, f'active=true^stateIN1,2,3^assignment_group={name}')
-        closed_count = _count(client, f'stateIN6,7^resolved_atRELATIVEGE@day@ago@30'
-                                      f'^assignment_group={name}')
+        open_count = _count(
+            client, f'active=true^stateIN1,2,3^assignment_group.name={name}')
+        closed_count = _count(client, f'stateIN6,7^resolved_at>={cutoff}'
+                                      f'^assignment_group.name={name}')
         rows.append((name, open_count, closed_count))
 
     width = max(len(r[0]) for r in rows)

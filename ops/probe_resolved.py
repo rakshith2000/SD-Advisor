@@ -62,7 +62,7 @@ def main() -> int:
         print(f'{flag}  {label:<42} {count:>6}')
         return rows
 
-    group_clause = ('^assignment_groupIN' + ','.join(groups)) if groups else ''
+    group_clause = ('^assignment_group.nameIN' + ','.join(groups)) if groups else ''
 
     print('--- does anything closed exist at all -------------------------------')
     any_closed = probe('stateIN6,7  (no date, no group)', 'stateIN6,7')
@@ -74,10 +74,16 @@ def main() -> int:
     print()
     print('--- the assignment_group clause on its own --------------------------')
     if groups:
-        probe('assignment_groupIN <names>', f'stateIN6,7{group_clause}')
-        probe('assignment_group= <first name>',
+        # assignment_group stores a sys_id. The bare forms compare that sys_id
+        # against a display name and cannot match; only the dot-walk reaches
+        # sys_user_group.name. LIKE is the exception - CONTAINS on a reference
+        # resolves to the display value - so it appears to work and misleads.
+        probe('assignment_group.nameIN  (PRODUCTION FORM)', f'stateIN6,7{group_clause}')
+        probe('assignment_group.name= <first>',
+              f'stateIN6,7^assignment_group.name={groups[0]}')
+        probe('[sys_id cmp] assignment_group= <first>',
               f'stateIN6,7^assignment_group={groups[0]}')
-        probe('assignment_groupLIKE <first name>',
+        probe('[display cmp] assignment_groupLIKE <first>',
               f'stateIN6,7^assignment_groupLIKE{groups[0]}')
     else:
         print('       no assignment_groups configured - clause is empty, skipping')
@@ -92,8 +98,14 @@ def main() -> int:
           f'stateIN6,7^resolved_atBETWEEN{js_date(start)}@{js_date(end)}')
     probe('resolved_atBETWEEN plain literals',
           f'stateIN6,7^resolved_atBETWEEN{plain_start}@{plain_end}')
-    probe('resolved_at RELATIVEGE@day@ago@30',
-          'stateIN6,7^resolved_atRELATIVEGE@day@ago@30')
+    # Control, not a candidate. An unparseable condition is DROPPED by
+    # ServiceNow rather than rejected, so a clause the instance does not
+    # understand matches everything. If either of these lands far above the
+    # BETWEEN count, that unit name is not recognised here.
+    probe('[control] RELATIVEGE@day@ago@30',
+          f'stateIN6,7^resolved_atRELATIVEGE@day@ago@{args.days}')
+    probe('[control] RELATIVEGE@dayofweek@ago@30',
+          f'stateIN6,7^resolved_atRELATIVEGE@dayofweek@ago@{args.days}')
 
     print()
     print('--- the exact production query --------------------------------------')

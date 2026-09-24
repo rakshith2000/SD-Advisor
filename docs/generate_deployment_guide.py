@@ -330,6 +330,22 @@ g.callout('info', 'What you get.',
           'existing ServiceNow credentials live — useful to know even though you will create '
           'a separate secret for the advisor. assignment_groups confirms the in-scope queues.')
 
+g.h3('3.2.1 Confirm the assignment group names before you go further')
+g.p('This single setting decides what the whole service can see, and getting it wrong costs '
+    'more time than anything else in this guide. The names must match sys_user_group.name '
+    'character for character — "Service Desk" will not find "IT Service Desk", and the '
+    'failure is silent.')
+g.code("""python ops/find_groups.py "Service Desk" """,
+       caption='Lists matching groups with their open and 30-day-resolved volumes')
+g.p('Paste the names it prints into servicenow.assignment_groups exactly as shown, then '
+    'verify with:')
+g.code("""python run.py doctor | grep "snow groups" """)
+g.callout('warn', 'Do not shorten or tidy the names.',
+          'The advisor scopes queries with assignment_group.nameIN<names>. Because '
+          'assignment_group stores a sys_id rather than text, the dot-walk to .name is what '
+          'makes a human-readable name work at all — and it is an exact comparison. A name '
+          'that does not exist contributes nothing and produces no warning from ServiceNow.')
+
 g.h2('3.3 Azure OpenAI endpoint and API version')
 g.code("""sudo cat /genai/etc/scripts/itsm_analytics/config/.oai_config.json""",
        caption='Contains the existing Azure OpenAI settings')
@@ -2108,12 +2124,40 @@ mysql -u sd_advisor -p sd_advisor_db -e "
   SELECT COUNT(*) FROM watched_ticket
    WHERE active = 1 AND opened_at <= NOW() - INTERVAL 5 DAY;"
 
-# 4. Is the group name spelled exactly as ServiceNow has it?
-mysql -u sd_advisor -p sd_advisor_db -e "
-  SELECT DISTINCT assignment_group FROM watched_ticket;" """)
+# 4. Is every configured group name a real one? (fails loudly if not)
+python run.py doctor | grep "snow groups"
+
+# 5. What are the real names, and how much traffic does each carry?
+python ops/find_groups.py "Service Desk"
+
+# 6. Still nothing? Take the incident query apart clause by clause.
+python ops/probe_resolved.py --days 30""")
 g.callout('warn', 'Most common cause.',
-          'assignment_groups in conf.json does not match the display value in ServiceNow — a '
-          'trailing space, different capitalisation, or an abbreviation. The comparison is exact.')
+          'servicenow.assignment_groups does not match sys_user_group.name exactly — a '
+          'trailing space, different capitalisation, or an abbreviation such as "Service Desk" '
+          'where the group is really "IT Service Desk". The comparison is exact, and a '
+          'near-miss returns HTTP 200 with an empty result rather than an error, so it '
+          'presents as a quiet day rather than as a fault. The "snow groups" check in '
+          'run.py doctor exists specifically to turn this into a visible failure.')
+
+g.h3('22.2.1 Why a wrong group name is silent')
+g.p('Two ServiceNow behaviours combine to hide this, and they fail in opposite directions. '
+    'Knowing which one you are looking at saves a lot of time.')
+g.table(
+    ['Situation', 'What ServiceNow does', 'What you see'],
+    [
+        ['Valid query, no matching records',
+         'Returns an empty result set, HTTP 200',
+         'Zero tickets — looks like a quiet queue'],
+        ['Unparseable condition',
+         'Drops that condition and runs the rest',
+         'Too many tickets — a filter that appears to be off'],
+    ],
+    widths=[1.7, 2.1, 2.2])
+g.p('A misspelled group name is the first row. A malformed operator — the wrong relative-date '
+    'unit, for instance — is the second. Because neither raises, always compare a suspect '
+    'query against an unfiltered baseline: if adding a clause does not change the count, that '
+    'clause is not being applied.')
 
 g.h2('22.3 Idle days look wrong')
 g.p('Almost always a missing system account. Inspect who is actually touching the ticket:')
