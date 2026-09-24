@@ -293,10 +293,27 @@ g.code("""{
     "vault_url": "https://127.0.0.1:8200",
     "llm_url": "https://10.20.53.10:8000"
 }""")
-g.rich([('Record ', {}), ('db_host', {'code': True}), (' and ', {}),
-        ('vault_url', {'code': True}),
-        ('. Ignore ', {}), ('llm_url', {'code': True}),
-        (' — it is a legacy value the audit tool no longer uses.', {})])
+g.rich([('Record ', {}), ('db_host', {'code': True}), ('. Ignore ', {}),
+        ('llm_url', {'code': True}),
+        (' — it is a legacy value the audit tool no longer uses. Treat ', {}),
+        ('vault_url', {'code': True}), (' with care; see below.', {})])
+
+g.callout('crit', 'Do not copy the audit tool\'s vault_url as-is.',
+          'It reads https://127.0.0.1:8200, which works there only because that tool passes '
+          'verify=False and skips certificate checking altogether. The advisor verifies TLS, '
+          'so the URL must use a name the Vault certificate is actually issued for. An IP '
+          'that is not listed in the certificate\'s SANs fails at startup with '
+          '"certificate verify failed: IP address mismatch".')
+
+g.p('Confirm which names the certificate covers:')
+g.code("""# What Vault actually serves
+echo | openssl s_client -connect 127.0.0.1:8200 2>/dev/null \\
+  | openssl x509 -noout -subject -ext subjectAltName
+
+# Or inspect the certificate file directly
+openssl x509 -in /opt/vault/tls/tls.crt -noout -subject -ext subjectAltName""")
+g.p('Use one of the names listed in the output as vault.url. On this estate that is '
+    'kohlerco.com, which is also what the existing startup_services.sh sets VAULT_ADDR to.')
 
 g.h2('3.2 ServiceNow URL and Vault secret path')
 g.p('The audit tool stores these in the database rather than a file. Query them:')
@@ -611,7 +628,7 @@ g.callout('info', 'Then set in conf.json:',
 g.h1('7. Step 5 — HashiCorp Vault configuration')
 
 g.h2('7.1 Confirm Vault is reachable and unsealed')
-g.code("""export VAULT_ADDR='https://127.0.0.1:8200'
+g.code("""export VAULT_ADDR='https://kohlerco.com:8200'
 export VAULT_CACERT='/opt/vault/tls/tls.crt'
 
 vault status
@@ -780,7 +797,7 @@ g.callout('info', 'No .vault_token file is needed.',
 
 g.h3('Step 5 — point conf.json at AppRole')
 g.code(""""vault": {
-    "url": "https://127.0.0.1:8200",
+    "url": "https://kohlerco.com:8200",
     "auth_method": "approle",
     "verify_tls": true,
     "ca_bundle": "/opt/vault/tls/tls.crt",
@@ -861,7 +878,7 @@ g.p('Finally, watch a renewal actually happen. With a 1h TTL the first one occur
     'thirty minutes after start-up:')
 g.code("""sudo journalctl -u aged-ticket-advisor -f | grep -i vault
 
-# Vault session established (https://127.0.0.1:8200, auth=approle)
+# Vault session established (https://kohlerco.com:8200, auth=approle)
 # AppRole login succeeded (ttl=3600s, renewable=True, policies=default,sd-advisor)
 # Vault token renewer started (first refresh in ~1800s)
 # ... 30 minutes later ...
@@ -1199,7 +1216,7 @@ g.code("""{
     "customer_name": "Kohler",
 
     "vault": {
-        "url": "https://127.0.0.1:8200",
+        "url": "https://kohlerco.com:8200",
         "token_file": "config/.vault_token",
         "verify_tls": true,
         "ca_bundle": "/opt/vault/tls/tls.crt",
@@ -1734,7 +1751,7 @@ g.h2('17.1 Required outbound access')
 g.table(['Destination', 'Port', 'Purpose'], [
     ['<instance>.service-now.com', '443/tcp', 'Ticket, history, SLA and KB reads'],
     ['<resource>.openai.azure.com', '443/tcp', 'Chat and embedding calls'],
-    ['Vault (127.0.0.1 or kohlerco.com)', '8200/tcp', 'Credential retrieval'],
+    ['Vault (kohlerco.com - must match the TLS certificate)', '8200/tcp', 'Credential retrieval'],
     ['MySQL', '3306/tcp (localhost)', 'Application database'],
     ['mailhost.kohler.com', '25/tcp', 'Digest delivery (anonymous relay)'],
 ], widths=[6.4, 3.0, 7.0], code_cols=(0, 1))
@@ -2036,6 +2053,11 @@ g.table(['Symptom', 'Cause', 'Fix'], [
      'Run it manually as the genai user and read the output'],
     ['Permission denied on a Vault credential file', 'Wrong file owner or mode',
      'chown genai and chmod 600 on .vault_role_id and .vault_secret_id'],
+    ['certificate verify failed: IP address mismatch',
+     'vault.url uses an IP (or a name) that the Vault TLS certificate does not cover. '
+     'The trust chain is fine — only the name check failed',
+     'Set vault.url to a name from the certificate\'s SANs (Section 3.1). Do NOT reach for '
+     'verify_tls: false — that discards the check entirely rather than fixing it'],
     ['source address "127.0.0.1" unauthorized by CIDR restrictions',
      'The role is bound to the LAN address, but Vault is on this host so the connection '
      'arrives over loopback',

@@ -6,7 +6,9 @@
     "vault": {
         "_comment": "auth_method 'approle' is recommended for the long-running service: a short-lived token is obtained at startup and renewed automatically, with re-login at max TTL. Use 'token' only for a quick trial.",
 
-        "url": "https://127.0.0.1:8200",
+        "_comment_url": "Must be a name the Vault TLS certificate is issued for. The audit tool uses https://127.0.0.1:8200 only because it disables certificate verification; with verify_tls on, an IP that is not in the certificate's SANs fails with 'IP address mismatch'. Check with: openssl s_client -connect 127.0.0.1:8200 </dev/null 2>/dev/null | openssl x509 -noout -ext subjectAltName",
+
+        "url": "https://kohlerco.com:8200",
         "auth_method": "approle",
         "verify_tls": true,
         "ca_bundle": "/opt/vault/tls/tls.crt",
