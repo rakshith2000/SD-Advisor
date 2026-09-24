@@ -5,6 +5,7 @@ the renewal arithmetic, both of which are pure local logic. Login and renewal
 round-trips are covered by `run.py doctor` against a real server.
 """
 
+import logging
 import os
 import stat
 import sys
@@ -63,14 +64,32 @@ class TestReadSecretFile:
         with pytest.raises(VaultError, match='is empty'):
             _read_secret_file(path, 'Vault secret_id')
 
-    @pytest.mark.skipif(ON_WINDOWS, reason='POSIX permission bits')
     def test_loose_permissions_warn_but_do_not_fail(self, tmp_path, caplog):
+        """An over-permissive credential file is worth flagging, but is not a
+        reason to refuse to start a service that is otherwise healthy."""
         path = tmp_path / '.vault_secret_id'
         path.write_text('sid', encoding='utf-8')
         path.chmod(0o644)
-        assert _read_secret_file(path, 'Vault secret_id') == 'sid'
-        assert any('should be 600' in r.message % r.args if r.args else
-                   'should be 600' in r.message for r in caplog.records)
+
+        with caplog.at_level(logging.WARNING, logger='core.vault'):
+            assert _read_secret_file(path, 'Vault secret_id') == 'sid'
+
+        # Asserted on the advice rather than the exact bits: Windows reports
+        # 666 for an ordinary file, so the mode differs but the warning does
+        # fire on both platforms - which is what this test is really about.
+        assert 'should be 600' in caplog.text
+        assert '.vault_secret_id' in caplog.text
+
+    def test_correct_permissions_produce_no_warning(self, tmp_path, caplog):
+        path = tmp_path / '.vault_role_id'
+        path.write_text('rid', encoding='utf-8')
+        path.chmod(0o600)
+
+        with caplog.at_level(logging.WARNING, logger='core.vault'):
+            assert _read_secret_file(path, 'Vault role_id') == 'rid'
+
+        if not ON_WINDOWS:          # Windows cannot represent mode 600
+            assert 'should be 600' not in caplog.text
 
 
 # ---------------------------------------------------------------------------
