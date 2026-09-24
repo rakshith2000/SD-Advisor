@@ -52,7 +52,9 @@ class ServiceNowClient:
         self.page_size = int(settings.get('servicenow.page_size', 200))
         self.verify_tls = bool(settings.get('servicenow.verify_tls', True))
 
-        snow_path = settings.get('vault.paths.servicenow')
+        # Required: a missing key here would otherwise surface as an obscure
+        # Vault error rather than a configuration one.
+        snow_path = settings.require('vault.paths.servicenow')
         username, password = vault.credential_pair(snow_path)
         self.username = username
 

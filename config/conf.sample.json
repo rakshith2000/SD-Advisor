@@ -24,7 +24,7 @@
 
         "paths": {
             "database": "sd_advisor_db",
-            "servicenow": "snow_kohler",
+            "servicenow": "snow_advisor",
             "smtp": "sd_advisor_smtp",
             "azure_openai": "sd_advisor_llm",
             "web": "sd_advisor_web"
