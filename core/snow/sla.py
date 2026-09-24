@@ -121,6 +121,7 @@ class SlaReader:
         self.include_types: List[str] = []
         self._by_sys_id: Dict[str, str] = {}
         self._by_name: Dict[str, str] = {}
+        self._duration_by_sys_id: Dict[str, str] = {}
 
         if settings is not None:
             self._load_definitions(settings)
@@ -134,6 +135,12 @@ class SlaReader:
         change how a ticket is scored. A 'name' key may also be supplied and is
         used as a secondary lookup, which keeps the config readable and lets a
         freshly-added definition be mapped before anyone digs out its sys_id.
+
+        An optional 'duration' records what the definition was set to when the
+        map was written. Nothing scores against it - durations come from the
+        live task_sla record - but sla-map compares the two and reports drift,
+        because retuning an SLA in ServiceNow changes sla_pct_consumed for
+        every ticket under it and silently reorders the board.
         """
         self.include_types = [
             str(t).strip() for t in (settings.get('sla.include_types', []) or [])
@@ -142,11 +149,16 @@ class SlaReader:
 
         definitions = settings.get('sla.definitions', {}) or {}
         for key, entry in definitions.items():
+            if str(key).startswith('_'):        # documentation keys
+                continue
+
+            duration = ''
             if isinstance(entry, str):
                 kind, name = entry.strip().upper(), ''
             elif isinstance(entry, dict):
                 kind = str(entry.get('kind', '')).strip().upper()
                 name = str(entry.get('name', '')).strip()
+                duration = str(entry.get('duration', '')).strip()
             else:
                 continue
 
@@ -155,9 +167,12 @@ class SlaReader:
                             key, kind, sorted(VALID_KINDS))
                 continue
 
-            self._by_sys_id[str(key).strip().lower()] = kind
+            sys_id = str(key).strip().lower()
+            self._by_sys_id[sys_id] = kind
             if name:
                 self._by_name[name.lower()] = kind
+            if duration:
+                self._duration_by_sys_id[sys_id] = duration
 
         if self._by_sys_id:
             log.info('Loaded %d configured SLA definitions (include_types=%s)',
@@ -221,11 +236,17 @@ class SlaReader:
             sys_id = (row.get('sys_id') or '').strip()
             name = (row.get('name') or '').strip()
             kind, source = self.classify_with_source(sys_id, name)
+            live = (row.get('duration') or '').strip()
+            recorded = self._duration_by_sys_id.get(sys_id.lower(), '')
             definitions.append({
                 'sys_id': sys_id,
                 'name': name,
                 'type': (row.get('type') or '').strip(),
-                'duration': (row.get('duration') or '').strip(),
+                'duration': live,
+                'recorded_duration': recorded,
+                # Only meaningful when a duration was recorded; an unrecorded
+                # definition is unverified, not drifted.
+                'duration_drift': bool(recorded) and live != recorded,
                 'kind': kind,
                 'source': source,
             })

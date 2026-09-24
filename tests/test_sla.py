@@ -35,19 +35,36 @@ P4_RESL = 'ffbc3e1e1beca410f8eb0f6e6e4bcbae'
 VENDOR_RESL = '10b7e3ab1be47090f8eb0f6e6e4bcb13'
 IAR = '4a0a1f0dff03211001b9ffffffffff78'
 
+P2_INC_RESP = '7d4429c72b2a4350793af829ce91bf34'
+
+# Durations are the production values as at 2026-09-24. They are documentation
+# for the scorer but load-bearing for sla-map's drift check.
 DEFINITIONS = {
-    P1_RESP: {'kind': 'RESPONSE', 'name': 'Priority 1(Critical) Response'},
-    P1_INC_RESP: {'kind': 'RESPONSE', 'name': 'Priority 1(Critical) Incident Response'},
-    P2_RESP: {'kind': 'RESPONSE', 'name': 'Priority 2 (High) Response'},
-    P3_RESP: {'kind': 'RESPONSE', 'name': 'Priority 3 (Medium) Response'},
-    P4_RESP: {'kind': 'RESPONSE', 'name': 'Priority 4 (Low) Response'},
-    P1_RESL: {'kind': 'RESOLUTION', 'name': 'Priority 1 (Critical) Resolution'},
-    P1_MAJOR_RESL: {'kind': 'RESOLUTION', 'name': 'P1 (Major Incident) Resolution'},
-    P2_RESL: {'kind': 'RESOLUTION', 'name': 'Priority 2 (High) Resolution'},
-    P3_RESL: {'kind': 'RESOLUTION', 'name': 'Priority 3 (Medium) Resolution'},
-    P4_RESL: {'kind': 'RESOLUTION', 'name': 'Priority 4 (Low) Resolution'},
-    VENDOR_RESL: {'kind': 'VENDOR', 'name': 'Vendor Resolution'},
-    IAR: {'kind': 'IGNORE', 'name': 'ITSM IAR SLA'},
+    P1_RESP: {'kind': 'RESPONSE', 'name': 'Priority 1(Critical) Response',
+              'duration': '15 Minutes'},
+    P1_INC_RESP: {'kind': 'RESPONSE', 'name': 'Priority 1(Critical) Incident Response',
+                  'duration': '15 Minutes'},
+    P2_RESP: {'kind': 'RESPONSE', 'name': 'Priority 2 (High) Response',
+              'duration': '30 Minutes'},
+    P2_INC_RESP: {'kind': 'RESPONSE', 'name': 'Priority 2 (Critical) Incident Response',
+                  'duration': '30 Minutes'},
+    P3_RESP: {'kind': 'RESPONSE', 'name': 'Priority 3 (Medium) Response',
+              'duration': '4 Hours'},
+    P4_RESP: {'kind': 'RESPONSE', 'name': 'Priority 4 (Low) Response',
+              'duration': '1 Day'},
+    P1_RESL: {'kind': 'RESOLUTION', 'name': 'Priority 1 (Critical) Resolution',
+              'duration': '4 Hours'},
+    P1_MAJOR_RESL: {'kind': 'RESOLUTION', 'name': 'P1 (Major Incident) Resolution',
+                    'duration': '4 Hours'},
+    P2_RESL: {'kind': 'RESOLUTION', 'name': 'Priority 2 (High) Resolution',
+              'duration': '6 Hours'},
+    P3_RESL: {'kind': 'RESOLUTION', 'name': 'Priority 3 (Medium) Resolution',
+              'duration': '2 Days'},
+    P4_RESL: {'kind': 'RESOLUTION', 'name': 'Priority 4 (Low) Resolution',
+              'duration': '3 Days'},
+    VENDOR_RESL: {'kind': 'VENDOR', 'name': 'Vendor Resolution',
+                  'duration': '10 Days'},
+    IAR: {'kind': 'IGNORE', 'name': 'ITSM IAR SLA', 'duration': '1 Day'},
 }
 
 
@@ -316,3 +333,94 @@ class TestDownstream:
     def test_flag_has_a_display_label(self):
         from delivery.digest import FLAG_LABELS
         assert FLAG_LABELS['VENDOR_SLA_BREACHED'] == 'Vendor SLA breached'
+
+
+# ---------------------------------------------------------------------------
+# duration drift (sla-map)
+# ---------------------------------------------------------------------------
+
+class FakeContractSlaClient:
+    """Serves contract_sla rows the way sysparm_display_value=true returns them."""
+
+    def __init__(self, rows):
+        self.rows = rows
+
+    def get_all(self, table, params, max_records=None):
+        assert table == 'contract_sla'
+        return list(self.rows)
+
+
+def definitions_reader(rows, definitions=None):
+    r = SlaReader(client=FakeContractSlaClient(rows),
+                  settings=FakeSettings({
+                      'sla.definitions': DEFINITIONS if definitions is None else definitions,
+                      'sla.include_types': ['SLA'],
+                  }))
+    return r
+
+
+def row(sys_id, name, duration, type_='SLA'):
+    return {'sys_id': sys_id, 'name': name, 'duration': duration, 'type': type_}
+
+
+class TestDurationDrift:
+    """Retuning an SLA in ServiceNow changes sla_pct_consumed for every ticket
+    under it and silently reorders the board. Nothing else would notice."""
+
+    def test_matching_duration_is_not_drift(self):
+        entries = definitions_reader(
+            [row(P3_RESL, 'Priority 3 (Medium) Resolution', '2 Days')]).get_definitions()
+        assert entries[0]['duration_drift'] is False
+        assert entries[0]['recorded_duration'] == '2 Days'
+
+    def test_changed_duration_is_drift(self):
+        entries = definitions_reader(
+            [row(P3_RESL, 'Priority 3 (Medium) Resolution', '4 Days')]).get_definitions()
+        assert entries[0]['duration_drift'] is True
+        assert entries[0]['recorded_duration'] == '2 Days'
+        assert entries[0]['duration'] == '4 Days'
+
+    def test_unrecorded_duration_is_unverified_not_drift(self):
+        """A definition with no recorded duration cannot have drifted."""
+        entries = definitions_reader(
+            [row('deadbeef' * 4, 'Some New Resolution SLA', '9 Days')]).get_definitions()
+        assert entries[0]['duration_drift'] is False
+        assert entries[0]['recorded_duration'] == ''
+
+    def test_sys_id_match_is_case_insensitive(self):
+        entries = definitions_reader(
+            [row(P3_RESL.upper(), 'Priority 3 (Medium) Resolution', '2 Days')]
+        ).get_definitions()
+        assert entries[0]['duration_drift'] is False
+
+    def test_every_production_definition_is_recorded(self):
+        """The whole prod map, served back unchanged, must show zero drift and
+        zero unverified entries - this is the state the config ships in."""
+        rows = [row(sid, e['name'], e['duration']) for sid, e in DEFINITIONS.items()]
+        entries = definitions_reader(rows).get_definitions()
+
+        assert len(entries) == 13
+        assert [e for e in entries if e['duration_drift']] == []
+        assert [e for e in entries if not e['recorded_duration']] == []
+        assert {e['source'] for e in entries} == {'config:sys_id'}
+
+    def test_production_kind_split(self):
+        """6 response, 5 resolution, 1 vendor, 1 ignored."""
+        rows = [row(sid, e['name'], e['duration']) for sid, e in DEFINITIONS.items()]
+        entries = definitions_reader(rows).get_definitions()
+        counts = {}
+        for entry in entries:
+            counts[entry['kind']] = counts.get(entry['kind'], 0) + 1
+        assert counts == {RESPONSE: 6, RESOLUTION: 5, VENDOR: 1, IGNORE: 1}
+
+
+class TestDocumentationKeysAreIgnored:
+    def test_underscore_keys_do_not_become_definitions(self):
+        """conf.json carries _comment/_kinds/_duration alongside real sys_ids."""
+        r = reader({
+            '_comment': 'not a definition',
+            '_duration': 'also not a definition',
+            P3_RESL: {'kind': 'RESOLUTION', 'name': 'Priority 3 (Medium) Resolution'},
+        })
+        assert r.classify(P3_RESL, '') == RESOLUTION
+        assert len(r._by_sys_id) == 1

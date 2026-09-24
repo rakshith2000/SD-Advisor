@@ -220,6 +220,12 @@ def cmd_sla_map(args) -> int:
     matters for scoring is which definitions count as the customer-facing
     resolution target - getting that wrong skews the largest component of the
     attention score, silently. This makes it visible.
+
+    Exit codes, so this can be a cron canary:
+        0  every definition explicitly mapped, no duration drift
+        1  no definitions found for the table
+        2  one or more definitions rely on the name-token fallback
+        3  a definition's duration differs from the recorded value
     """
     ctx = get_context(args.config)
     definitions = ctx.sla.get_definitions(collection=args.table)
@@ -234,16 +240,32 @@ def cmd_sla_map(args) -> int:
 
     counts: dict = {}
     fallback = []
+    drifted = []
 
     for entry in definitions:
         counts[entry['kind']] = counts.get(entry['kind'], 0) + 1
         if entry['source'] in ('name-token', 'unmatched'):
             fallback.append(entry)
+
+        duration = entry['duration']
+        if entry['duration_drift']:
+            drifted.append(entry)
+            duration += ' *'
         print(f"{entry['kind']:<11} {entry['name']:<{name_width}}  "
-              f"{entry['type']:<6} {entry['duration']:<12} {entry['source']}")
+              f"{entry['type']:<6} {duration:<12} {entry['source']}")
 
     print()
     print('Totals: ' + ', '.join(f'{k}={v}' for k, v in sorted(counts.items())))
+
+    if drifted:
+        print()
+        print(f'WARNING: {len(drifted)} definition(s) marked * have a different duration than')
+        print('when this map was written. Every ticket under them is now scored against a')
+        print('different target, which moves sla_pct_consumed and reorders the board:')
+        for entry in drifted:
+            print(f"    {entry['name']}: recorded {entry['recorded_duration']!r}, "
+                  f"now {entry['duration']!r}")
+        print('Confirm the change was intended, then update duration in sla.definitions.')
 
     include = ctx.sla.include_types
     print(f'Types counted: {", ".join(include) if include else "all (no filter configured)"}')
@@ -260,10 +282,19 @@ def cmd_sla_map(args) -> int:
         for entry in fallback:
             marker = '  <-- UNMATCHED, defaults to OTHER' if entry['source'] == 'unmatched' else ''
             print(f'    "{entry["sys_id"]}": {{ "kind": "{entry["kind"]}", '
-                  f'"name": "{entry["name"]}" }},{marker}')
+                  f'"name": "{entry["name"]}", "duration": "{entry["duration"]}" }},{marker}')
         return 2
 
-    print('\nAll definitions are explicitly configured.')
+    if drifted:
+        return 3
+
+    unverified = [d for d in definitions if not d['recorded_duration']]
+    if unverified:
+        print(f'\nAll definitions are explicitly configured. {len(unverified)} have no '
+              f'recorded duration, so a retune in ServiceNow would go unnoticed.')
+    else:
+        print('\nAll definitions are explicitly configured, and every duration matches '
+              'what was recorded.')
     return 0
 
 

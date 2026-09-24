@@ -59,27 +59,28 @@
     },
 
     "sla": {
-        "_comment": "contract_sla is the DEFINITION; task_sla is that definition attached to one ticket. They join on task_sla.sla -> contract_sla.sys_id. Keys below are contract_sla sys_ids; 'name' is documentation only. Anything not listed falls back to matching words in the definition name, so a new SLA degrades gracefully. Verify with: python run.py sla-map",
+        "_comment": "contract_sla is the DEFINITION; task_sla is that definition attached to one ticket. They join on task_sla.sla -> contract_sla.sys_id. Keys below are contract_sla sys_ids; 'name' and 'duration' are documentation only. Anything not listed falls back to matching words in the definition name, so a new SLA degrades gracefully. Verify with: python run.py sla-map",
         "_kinds": "RESOLUTION = the customer-facing commitment we score on | RESPONSE = time to first contact | VENDOR = third-party target, reported separately, never counted as our breach | IGNORE = excluded entirely | OTHER = unrecognised, used only as a last resort",
+        "_duration": "What each definition was set to when this map was written, taken from the PRODUCTION instance (kohler.service-now.com) on 2026-09-24. Nothing scores against it - live values come from task_sla - but sla-map flags any that have since changed, because retuning an SLA moves sla_pct_consumed for every ticket under it and reorders the board with no other trace.",
 
         "include_types": ["SLA"],
 
         "definitions": {
-            "6a3dab1e1b60e410f8eb0f6e6e4bcba2": { "kind": "RESPONSE",   "name": "Priority 1(Critical) Response" },
-            "342465c72b2a4350793af829ce91bf75": { "kind": "RESPONSE",   "name": "Priority 1(Critical) Incident Response" },
-            "481eab9a1b60e410f8eb0f6e6e4bcb02": { "kind": "RESPONSE",   "name": "Priority 2 (High) Response" },
-            "7d4429c72b2a4350793af829ce91bf34": { "kind": "RESPONSE",   "name": "Priority 2 (Critical) Incident Response" },
-            "288ee35e1b60e410f8eb0f6e6e4bcb76": { "kind": "RESPONSE",   "name": "Priority 3 (Medium) Response" },
-            "3eeea35e1b60e410f8eb0f6e6e4bcb86": { "kind": "RESPONSE",   "name": "Priority 4 (Low) Response" },
+            "6a3dab1e1b60e410f8eb0f6e6e4bcba2": { "kind": "RESPONSE",   "name": "Priority 1(Critical) Response",           "duration": "15 Minutes" },
+            "342465c72b2a4350793af829ce91bf75": { "kind": "RESPONSE",   "name": "Priority 1(Critical) Incident Response",  "duration": "15 Minutes" },
+            "481eab9a1b60e410f8eb0f6e6e4bcb02": { "kind": "RESPONSE",   "name": "Priority 2 (High) Response",              "duration": "30 Minutes" },
+            "7d4429c72b2a4350793af829ce91bf34": { "kind": "RESPONSE",   "name": "Priority 2 (Critical) Incident Response", "duration": "30 Minutes" },
+            "288ee35e1b60e410f8eb0f6e6e4bcb76": { "kind": "RESPONSE",   "name": "Priority 3 (Medium) Response",            "duration": "4 Hours" },
+            "3eeea35e1b60e410f8eb0f6e6e4bcb86": { "kind": "RESPONSE",   "name": "Priority 4 (Low) Response",               "duration": "1 Day" },
 
-            "c1e472d21beca410f8eb0f6e6e4bcb65": { "kind": "RESOLUTION", "name": "Priority 1 (Critical) Resolution" },
-            "0d8ec5072be24350793af829ce91bf83": { "kind": "RESOLUTION", "name": "P1 (Major Incident) Resolution" },
-            "d606b61a1beca410f8eb0f6e6e4bcb9b": { "kind": "RESOLUTION", "name": "Priority 2 (High) Resolution" },
-            "4edbfeda1beca410f8eb0f6e6e4bcbe2": { "kind": "RESOLUTION", "name": "Priority 3 (Medium) Resolution" },
-            "ffbc3e1e1beca410f8eb0f6e6e4bcbae": { "kind": "RESOLUTION", "name": "Priority 4 (Low) Resolution" },
+            "c1e472d21beca410f8eb0f6e6e4bcb65": { "kind": "RESOLUTION", "name": "Priority 1 (Critical) Resolution",        "duration": "4 Hours" },
+            "0d8ec5072be24350793af829ce91bf83": { "kind": "RESOLUTION", "name": "P1 (Major Incident) Resolution",          "duration": "4 Hours" },
+            "d606b61a1beca410f8eb0f6e6e4bcb9b": { "kind": "RESOLUTION", "name": "Priority 2 (High) Resolution",            "duration": "6 Hours" },
+            "4edbfeda1beca410f8eb0f6e6e4bcbe2": { "kind": "RESOLUTION", "name": "Priority 3 (Medium) Resolution",          "duration": "2 Days" },
+            "ffbc3e1e1beca410f8eb0f6e6e4bcbae": { "kind": "RESOLUTION", "name": "Priority 4 (Low) Resolution",             "duration": "3 Days" },
 
-            "10b7e3ab1be47090f8eb0f6e6e4bcb13": { "kind": "VENDOR",     "name": "Vendor Resolution" },
-            "4a0a1f0dff03211001b9ffffffffff78": { "kind": "IGNORE",     "name": "ITSM IAR SLA" }
+            "10b7e3ab1be47090f8eb0f6e6e4bcb13": { "kind": "VENDOR",     "name": "Vendor Resolution",                       "duration": "10 Days" },
+            "4a0a1f0dff03211001b9ffffffffff78": { "kind": "IGNORE",     "name": "ITSM IAR SLA",                            "duration": "1 Day" }
         }
     },
 

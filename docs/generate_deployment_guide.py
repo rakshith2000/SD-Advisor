@@ -470,15 +470,45 @@ VENDOR      Vendor Resolution                           SLA    10 Days      conf
 Totals: IGNORE=1, RESOLUTION=5, RESPONSE=6, VENDOR=1
 Types counted: SLA
 
-All definitions are explicitly configured.""")
+All definitions are explicitly configured, and every duration matches what was recorded.""")
 
 g.p('The SOURCE column is the thing to read. Any row showing name-token or unmatched is '
     'relying on the fallback and should be added to the map — the command prints a ready-to-'
-    'paste config line for each, and exits with status 2 so it can gate a deployment pipeline.')
+    'paste config line for each.')
+
+g.h3('Duration drift')
+g.p('Each entry in sla.definitions also records the duration the definition had when the map '
+    'was written. Nothing is scored against it — live figures come from task_sla — but '
+    'sla-map compares the two and marks any that have changed with an asterisk. This matters '
+    'because retuning an SLA in ServiceNow is invisible from the advisor\'s side: '
+    'sla_pct_consumed moves for every ticket under that definition, sla_jeopardy fires at a '
+    'different point, and the board reorders with nothing in the logs to explain it.')
+g.code("""RESOLUTION  Priority 3 (Medium) Resolution   SLA    4 Days *     config:sys_id
+
+WARNING: 1 definition(s) marked * have a different duration than
+when this map was written. ...
+    Priority 3 (Medium) Resolution: recorded '2 Days', now '4 Days'""",
+       caption='What a retuned SLA looks like')
+g.p('Confirm the change was intended, then update the duration in conf.json to re-baseline.')
+
+g.h3('Exit codes')
+g.table(
+    ['Code', 'Meaning', 'Action'],
+    [
+        ['0', 'Every definition explicitly mapped, no drift', 'None'],
+        ['1', 'No definitions found for the table', 'Check the collection name and read ACLs'],
+        ['2', 'One or more rely on the name-token fallback', 'Paste the printed lines into conf.json'],
+        ['3', 'A duration differs from the recorded value', 'Confirm intended, then re-baseline'],
+    ],
+    widths=[0.6, 3.0, 2.4])
+g.p('Non-zero on both 2 and 3 makes this usable as a deployment gate or a weekly cron canary, '
+    'not just a one-off check.')
 
 g.callout('warn', 'Re-run sla-map whenever SLA definitions change.',
           'A new definition added in ServiceNow will fall through to name matching. That is '
-          'usually correct, but it is exactly the case worth checking rather than assuming.')
+          'usually correct, but it is exactly the case worth checking rather than assuming. '
+          'The same command now also catches a retune of an existing definition, which is '
+          'otherwise completely silent.')
 
 
 # =========================================================== SECTION 4 =====
@@ -1465,7 +1495,7 @@ g.p('Then verify the SLA mapping, which doctor does not cover because it needs t
 g.code("""python run.py sla-map""")
 g.p('Every row should show a SOURCE of config:sys_id. Anything reporting name-token or '
     'unmatched is relying on the fallback — the command prints the config line to paste, and '
-    'exits with status 2 so a pipeline can gate on it. Section 3.5 explains the kinds.')
+    'exits non-zero on either an unmapped definition or a changed duration, so a pipeline can gate on it. Section 3.5 explains the kinds.')
 
 g.h2('12.1 Interpreting failures')
 g.table(['Failing check', 'Most likely cause', 'Resolution'], [
