@@ -700,7 +700,9 @@ g.h3('Step 1 — enable the auth method')
 g.code("""vault auth list | grep -q '^approle/' || vault auth enable approle""")
 
 g.h3('Step 2 — create the role')
-g.code("""vault write auth/approle/role/sd-advisor \\
+g.code("""LAN_IP=$(hostname -I | awk '{print $1}')
+
+vault write auth/approle/role/sd-advisor \\
     token_policies="sd-advisor" \\
     token_ttl=1h \\
     token_max_ttl=24h \\
@@ -708,8 +710,16 @@ g.code("""vault write auth/approle/role/sd-advisor \\
     secret_id_num_uses=0 \\
     token_num_uses=0 \\
     bind_secret_id=true \\
-    secret_id_bound_cidrs="<APP_SERVER_IP>/32" \\
-    token_bound_cidrs="<APP_SERVER_IP>/32" """)
+    secret_id_bound_cidrs="127.0.0.1/32,${LAN_IP}/32" \\
+    token_bound_cidrs="127.0.0.1/32,${LAN_IP}/32" """)
+
+g.callout('crit', 'Include loopback, or login will fail.',
+          'CIDR restrictions match the source address AS VAULT OBSERVES IT, not the address '
+          'you dialled. Vault runs on the same host as the advisor here, so the connection '
+          'arrives over loopback and Vault sees 127.0.0.1 — even when VAULT_ADDR is '
+          'https://kohlerco.com:8200. Binding only to the LAN address produces: '
+          '\'source address "127.0.0.1" unauthorized by CIDR restrictions on the role\'. '
+          'Listing both addresses also keeps the role working if DNS or routing changes.')
 
 g.table(['Parameter', 'Value', 'Why'], [
     ['token_ttl', '1h', 'Short-lived. Renewed automatically at the halfway point'],
@@ -720,16 +730,24 @@ g.table(['Parameter', 'Value', 'Why'], [
     ['secret_id_num_uses', '0', 'Unlimited logins. The service re-logs-in on every restart '
                                 'and at every max_ttl boundary'],
     ['token_num_uses', '0', 'Unlimited API calls per token'],
-    ['secret_id_bound_cidrs', 'App server /32', 'The secret_id is unusable from anywhere '
-                                                'else. This is the single most valuable '
-                                                'hardening on this page'],
-    ['token_bound_cidrs', 'App server /32', 'Same protection for the issued token'],
+    ['secret_id_bound_cidrs', 'loopback + LAN /32', 'The secret_id is unusable from any '
+                                                    'other host. See the warning above on '
+                                                    'which addresses to list'],
+    ['token_bound_cidrs', 'loopback + LAN /32', 'Same protection for the issued token'],
 ], widths=[3.8, 2.8, 9.8], code_cols=(0,))
 
-g.callout('warn', 'Set the CIDR bindings.',
+g.callout('warn', 'What the CIDR binding does and does not buy you.',
           'The secret_id is long-lived and sits on disk, so it is the credential worth '
-          'protecting. Binding it to the application server\'s address means a copy taken '
-          'off the box cannot be used. Find the address with "hostname -I" and use a /32.')
+          'protecting, and binding it means a copy taken off the box — in a backup, a '
+          'support bundle, or onto a laptop — cannot be used. That is the realistic leak, '
+          'and this stops it. But because Vault is on the same host, 127.0.0.1/32 admits '
+          'any local process, so it is not protection against local compromise. There, the '
+          'control is filesystem permissions: mode 600, owned by the service account.')
+
+g.callout('warn', 'vault write REPLACES the role.',
+          'It is not a patch. Any parameter you omit reverts to its default — so when '
+          'amending an existing role, re-supply every line above, not just the one you are '
+          'changing. Confirm the result with "vault read auth/approle/role/sd-advisor".')
 
 g.h3('Step 3 — fetch the role_id and generate a secret_id')
 g.code("""# role_id is stable and not itself a secret, but treat it as one
@@ -737,6 +755,12 @@ vault read -field=role_id auth/approle/role/sd-advisor/role-id
 
 # secret_id IS a secret. It is shown once and cannot be retrieved again.
 vault write -f -field=secret_id auth/approle/role/sd-advisor/secret-id""")
+
+g.callout('crit', 'Always generate a fresh secret_id after changing the role.',
+          'A secret_id carries the CIDR list it was issued under. Amending '
+          'secret_id_bound_cidrs on the role does not retrofit credentials that already '
+          'exist, so an existing secret_id keeps failing with the same error. This catches '
+          'people out every time.')
 
 g.h3('Step 4 — install both on the application server')
 g.code("""BASE=/genai/etc/scripts/aged_ticket_advisor
@@ -2012,10 +2036,14 @@ g.table(['Symptom', 'Cause', 'Fix'], [
      'Run it manually as the genai user and read the output'],
     ['Permission denied on a Vault credential file', 'Wrong file owner or mode',
      'chown genai and chmod 600 on .vault_role_id and .vault_secret_id'],
-    ['AppRole login failed: invalid role or secret ID', 'secret_id destroyed, expired, or '
-     'the CIDR binding rejects this host',
-     'Generate a new secret_id (Section 7.7); check secret_id_bound_cidrs matches the '
-     'server address'],
+    ['source address "127.0.0.1" unauthorized by CIDR restrictions',
+     'The role is bound to the LAN address, but Vault is on this host so the connection '
+     'arrives over loopback',
+     'Add 127.0.0.1/32 to secret_id_bound_cidrs AND token_bound_cidrs, re-supplying every '
+     'other role parameter, then generate a NEW secret_id — existing ones keep the old '
+     'CIDR list'],
+    ['AppRole login failed: invalid role or secret ID', 'secret_id destroyed or expired',
+     'Generate a new secret_id (Section 7.7)'],
     ['Repeated "logging in again" in the log', 'token_max_ttl is very short relative to '
      'token_ttl', 'Expected at each max_ttl boundary; frequent enough to be noisy means '
                   'the role TTLs need widening'],
@@ -2169,7 +2197,7 @@ g.table(['#', 'Value', 'Where it comes from', 'Your value'], [
     ['5', 'MySQL password for sd_advisor', 'Generated in Section 6.1', 'in Vault'],
     ['6', 'Vault URL', 'qa_conf.json → vault_url', ''],
     ['7', 'Vault CA bundle path', 'startup_services.sh', ''],
-    ['7b', 'App server IP (for the AppRole CIDR binding)', 'hostname -I', ''],
+    ['7b', 'AppRole CIDR list', '127.0.0.1/32 plus $(hostname -I) — see §7.4', ''],
     ['8', 'ServiceNow instance URL', 'itsm_configuration_table.itsm_url', ''],
     ['9', 'ServiceNow integration user', 'Created in Section 8.1', ''],
     ['10', 'ServiceNow password', 'Generated in Section 8.1', 'in Vault'],
@@ -2280,7 +2308,7 @@ g.checklist([
     ('AppRole is in use rather than a static token', 'run.py doctor | grep vault'),
     ('.vault_role_id and .vault_secret_id are mode 600, owned by the service account',
      'ls -l config/.vault_*'),
-    ('The secret_id is CIDR-bound to this server',
+    ('The secret_id is CIDR-bound to this server (loopback + LAN)',
      'vault read auth/approle/role/sd-advisor'),
     ('Automatic renewal is running', 'journalctl -u aged-ticket-advisor | grep "token renew"'),
     ('conf.json is mode 600', 'ls -l config/conf.json'),

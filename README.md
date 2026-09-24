@@ -159,14 +159,27 @@ hits max TTL:
 
 ```bash
 vault auth enable approle
+
+LAN_IP=$(hostname -I | awk '{print $1}')
 vault write auth/approle/role/sd-advisor \
     token_policies="sd-advisor" token_ttl=1h token_max_ttl=24h \
-    secret_id_ttl=0 secret_id_num_uses=0 \
-    secret_id_bound_cidrs="<APP_SERVER_IP>/32"
+    secret_id_ttl=0 secret_id_num_uses=0 bind_secret_id=true \
+    secret_id_bound_cidrs="127.0.0.1/32,${LAN_IP}/32" \
+    token_bound_cidrs="127.0.0.1/32,${LAN_IP}/32"
 
-vault read  -field=role_id   auth/approle/role/sd-advisor/role-id
+vault read  -field=role_id      auth/approle/role/sd-advisor/role-id
 vault write -f -field=secret_id auth/approle/role/sd-advisor/secret-id
 ```
+
+> **Include `127.0.0.1/32`.** CIDR restrictions match the source address as
+> *Vault* sees it. Vault runs on this host, so logins arrive over loopback even
+> when `VAULT_ADDR` is `https://kohlerco.com:8200`. Binding only to the LAN
+> address fails with `source address "127.0.0.1" unauthorized by CIDR
+> restrictions on the role`.
+>
+> Two further gotchas: `vault write` **replaces** the role (re-supply every
+> parameter when amending it), and a `secret_id` keeps the CIDR list it was
+> issued under — so **generate a new one** after changing the role.
 
 Write those to `config/.vault_role_id` and `config/.vault_secret_id` at mode
 600, then set `vault.auth_method: "approle"`. No `.vault_token` is needed —

@@ -52,10 +52,15 @@ if [[ ! -f config/.vault_role_id || ! -f config/.vault_secret_id ]]; then
   echo
   echo "AppRole credentials are missing. Create the role on the Vault server:"
   echo "    vault auth enable approle"
+  echo "    LAN_IP=\$(hostname -I | awk '{print \$1}')"
   echo "    vault write auth/approle/role/sd-advisor \\"
   echo "        token_policies=sd-advisor token_ttl=1h token_max_ttl=24h \\"
-  echo "        secret_id_ttl=0 secret_id_num_uses=0 \\"
-  echo "        secret_id_bound_cidrs=\"\$(hostname -I | awk '{print \$1}')/32\""
+  echo "        secret_id_ttl=0 secret_id_num_uses=0 bind_secret_id=true \\"
+  echo "        secret_id_bound_cidrs=\"127.0.0.1/32,\${LAN_IP}/32\" \\"
+  echo "        token_bound_cidrs=\"127.0.0.1/32,\${LAN_IP}/32\""
+  echo
+  echo "  NOTE: 127.0.0.1/32 is required - Vault runs on this host, so logins"
+  echo "        arrive over loopback regardless of what VAULT_ADDR points at."
   echo
   echo "Then install both credentials here (do NOT reuse the audit tool's token):"
   echo "    install -m 600 /dev/stdin config/.vault_role_id   <<< '<ROLE_ID>'"
