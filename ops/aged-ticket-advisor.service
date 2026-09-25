@@ -17,8 +17,6 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=genai
-Group=genai
 WorkingDirectory=/genai/etc/scripts/aged_ticket_advisor
 
 Environment=PYTHONUNBUFFERED=1
