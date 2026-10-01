@@ -3,11 +3,12 @@
   stream        every 10 min   delta sync + signals + risk alerts   (no LLM)
   recommend     hourly         LLM pass over changed tickets
   digest        per cron entry lead digest, then agent digests
-  maintenance   nightly        full sync, index refresh, baselines, tidy-up
+  maintenance   nightly        full sync, index refresh, baselines, retention
 
 APScheduler with coalescing and max_instances=1 per job: if a run overruns its
 interval the next one is skipped rather than stacking up, which is the failure
-mode that turns a slow ServiceNow morning into a thundering herd.
+failure mode that would turn a slow ServiceNow period into a backlog of
+concurrent runs.
 """
 
 import datetime

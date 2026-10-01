@@ -1,12 +1,12 @@
-"""Attention Score - the ranking that actually saves the lead time.
+"""Attention Score - the ranking that determines what a lead reviews first.
 
 Deliberately deterministic and fully decomposed: every point is attributable
-to a named component, so a lead can ask "why is this ticket top of my list"
-and get an arithmetic answer rather than a model's opinion.
+to a named component, so a lead asking why an incident is ranked highest
+receives an arithmetic answer rather than a model's opinion.
 
 Weights live in attention_weightage and are editable from the UI. The
 "revert to defaults if the weights do not sum to 100" guard is borrowed from
-the existing audit tool - it is a good idea and stops a half-finished edit
+the existing audit tool: it is a sound safeguard and prevents an incomplete edit
 silently distorting every score.
 """
 
@@ -19,13 +19,13 @@ from pipeline.signals import priority_weight
 log = get_logger('pipeline.scoring')
 
 DEFAULT_WEIGHTS: Dict[str, int] = {
-    'sla_jeopardy': 25,
-    'stagnation': 25,
-    'age': 10,
-    'priority': 10,
-    'churn': 5,
-    'blocked_stale': 15,
-    'p90_overrun': 10,
+    'sla_risk': 25,
+    'inactivity_duration': 25,
+    'ticket_age': 10,
+    'business_priority': 10,
+    'reassignment_activity': 5,
+    'unactioned_delay': 15,
+    'duration_overrun': 10,
 }
 
 
@@ -64,7 +64,7 @@ def load_weights(db) -> Dict[str, int]:
 # component scores, each normalised to 0-100
 # ---------------------------------------------------------------------------
 
-def _sla_component(signals: Dict[str, Any]) -> float:
+def _sla_risk_component(signals: Dict[str, Any]) -> float:
     if signals.get('sla_breached'):
         return 100.0
 
@@ -87,14 +87,14 @@ def _sla_component(signals: Dict[str, Any]) -> float:
     return 10.0
 
 
-def _stagnation_component(signals: Dict[str, Any], thresholds: Dict[str, Any]) -> float:
+def _inactivity_duration_component(signals: Dict[str, Any], thresholds: Dict[str, Any]) -> float:
     idle = float(signals.get('idle_days') or 0.0)
-    critical = float(thresholds.get('critical_stagnation_days', 4) or 4)
+    critical = float(thresholds.get('prolonged_inactivity_days', 4) or 4)
     # Linear to the critical threshold, then saturated.
     return max(0.0, min(100.0, (idle / critical) * 100.0))
 
 
-def _age_component(signals: Dict[str, Any], thresholds: Dict[str, Any]) -> float:
+def _ticket_age_component(signals: Dict[str, Any], thresholds: Dict[str, Any]) -> float:
     age = float(signals.get('age_days') or 0.0)
     aged_after = float(thresholds.get('aged_after_days', 5) or 5)
     if age <= aged_after:
@@ -103,18 +103,18 @@ def _age_component(signals: Dict[str, Any], thresholds: Dict[str, Any]) -> float
     return max(0.0, min(100.0, ((age - aged_after) / aged_after) * 100.0))
 
 
-def _priority_component(ticket: Dict[str, Any]) -> float:
+def _business_priority_component(ticket: Dict[str, Any]) -> float:
     return float(priority_weight(ticket.get('priority')))
 
 
-def _churn_component(ticket: Dict[str, Any]) -> float:
+def _reassignment_activity_component(ticket: Dict[str, Any]) -> float:
     reassignments = int(ticket.get('reassignment_count') or 0)
     reopens = int(ticket.get('reopen_count') or 0)
     return max(0.0, min(100.0, reassignments * 20.0 + reopens * 30.0))
 
 
-def _blocked_stale_component(signals: Dict[str, Any]) -> float:
-    """The "should not still be sitting there" signals."""
+def _unactioned_delay_component(signals: Dict[str, Any]) -> float:
+    """Indicators that an incident is actionable but has not been progressed."""
     score = 0.0
     if signals.get('caller_replied_unanswered'):
         score += 60.0
@@ -124,16 +124,16 @@ def _blocked_stale_component(signals: Dict[str, Any]) -> float:
         score += 30.0
     if signals.get('last_agent_action_at') is None:
         score += 40.0
-    # The vendor has blown their target and nobody has escalated. Contributes
-    # here rather than to sla_jeopardy, which is reserved for the
+    # The vendor has exceeded its target and no escalation has been raised.
+    # Contributes here rather than to sla_risk, which is reserved for the
     # customer-facing commitment.
     if signals.get('vendor_sla_breached'):
         score += 40.0
     return min(100.0, score)
 
 
-def _p90_component(signals: Dict[str, Any]) -> float:
-    if not signals.get('p90_overrun'):
+def _duration_overrun_component(signals: Dict[str, Any]) -> float:
+    if not signals.get('duration_overrun'):
         return 0.0
     expected = signals.get('expected_resolution_hours')
     age_hours = float(signals.get('age_days') or 0.0) * 24.0
@@ -154,13 +154,13 @@ def compute_attention_score(ticket: Dict[str, Any], signals: Dict[str, Any],
     thresholds = thresholds or {}
 
     components = {
-        'sla_jeopardy': _sla_component(signals),
-        'stagnation': _stagnation_component(signals, thresholds),
-        'age': _age_component(signals, thresholds),
-        'priority': _priority_component(ticket),
-        'churn': _churn_component(ticket),
-        'blocked_stale': _blocked_stale_component(signals),
-        'p90_overrun': _p90_component(signals),
+        'sla_risk': _sla_risk_component(signals),
+        'inactivity_duration': _inactivity_duration_component(signals, thresholds),
+        'ticket_age': _ticket_age_component(signals, thresholds),
+        'business_priority': _business_priority_component(ticket),
+        'reassignment_activity': _reassignment_activity_component(ticket),
+        'unactioned_delay': _unactioned_delay_component(signals),
+        'duration_overrun': _duration_overrun_component(signals),
     }
 
     breakdown: Dict[str, Any] = {}
@@ -183,15 +183,18 @@ def compute_attention_score(ticket: Dict[str, Any], signals: Dict[str, Any],
 
 
 def top_reasons(breakdown: Dict[str, Any], limit: int = 3) -> List[str]:
-    """Plain-English 'why is this ranked here' for the email and UI."""
+    """The ranking rationale shown to leads, in plain language.
+
+    Rendered mid-sentence as "ranked for X, Y, Z", hence the lower case.
+    """
     labels = {
-        'sla_jeopardy': 'SLA at risk',
-        'stagnation': 'no recent agent action',
-        'age': 'ticket age',
-        'priority': 'business priority',
-        'churn': 'reassignment churn',
-        'blocked_stale': 'stalled despite being actionable',
-        'p90_overrun': 'past expected resolution time',
+        'sla_risk': 'SLA breach risk',
+        'inactivity_duration': 'no recent Service Desk action',
+        'ticket_age': 'ticket age',
+        'business_priority': 'business priority',
+        'reassignment_activity': 'reassignment activity',
+        'unactioned_delay': 'actionable but not progressed',
+        'duration_overrun': 'expected resolution time exceeded',
     }
     ranked = sorted(breakdown.items(), key=lambda kv: kv[1]['points'], reverse=True)
     return [labels.get(name, name) for name, data in ranked if data['points'] > 0][:limit]

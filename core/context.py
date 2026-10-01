@@ -12,7 +12,7 @@ start and serve the board if Azure OpenAI is unreachable.
 import threading
 from typing import Any, Dict, List, Optional
 
-from core.config import Settings, load_settings
+from core.config import Settings, load_settings, normalise_thresholds
 from core.db import Database, build_audit_database, build_database
 from core.logging_setup import get_logger, setup_logging
 from core.llm.client import LlmClient
@@ -132,7 +132,7 @@ class AppContext:
         return sorted(merged.values())
 
     def thresholds(self) -> Dict[str, Any]:
-        return dict(self.settings.get('thresholds', {}) or {})
+        return normalise_thresholds(self.settings.get('thresholds', {}))
 
     def weights(self) -> Dict[str, int]:
         return load_weights(self.db)

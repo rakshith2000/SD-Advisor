@@ -1,7 +1,7 @@
 """MySQL access layer.
 
 Keeps the parameterised-condition idea from the existing tool (it reads well at
-call sites) but fixes the things that bite at scale:
+call sites) but addresses the issues that matter at scale:
   * one long-lived connection per Database object, with ping-reconnect, instead
     of a fresh connection per ticket
   * cursors always closed via context managers

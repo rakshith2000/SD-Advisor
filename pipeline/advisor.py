@@ -2,7 +2,7 @@
 
 One structured LLM call per ticket, keyed on a hash of everything that went
 into the prompt. If nothing material has changed since the last analysis the
-cached recommendation is reused - which matters a lot here, because an aged
+cached recommendation is reused. This matters considerably here, because an aged
 ticket is by definition one that mostly is not changing. In steady state this
 keeps real model calls to the tickets that actually moved.
 """
@@ -27,7 +27,7 @@ _CACHE_KEYS = (
     'state', 'hold_reason', 'assignment_group', 'assigned_to', 'priority',
 )
 _CACHE_SIGNALS = (
-    'ball_in_court', 'caller_replied_unanswered', 'dependency_resolved',
+    'pending_action_owner', 'caller_replied_unanswered', 'dependency_resolved',
     'auto_close_candidate', 'sla_breached', 'followup_count',
 )
 
@@ -194,10 +194,10 @@ class Advisor:
         elif signals.get('auto_close_candidate'):
             action, reason = (RecommendedAction.CLOSE_STALE,
                               'Follow-ups have been made and the caller has not responded.')
-        elif signals.get('ball_in_court') == 'VENDOR':
+        elif signals.get('pending_action_owner') == 'VENDOR':
             action, reason = (RecommendedAction.CHASE_VENDOR,
                               'The ticket is waiting on a third party.')
-        elif 'CRITICALLY_STALE' in flags:
+        elif 'PROLONGED_INACTIVITY' in flags:
             action, reason = (RecommendedAction.ESCALATE,
                               'No agent activity for an extended period.')
         else:

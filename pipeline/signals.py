@@ -6,9 +6,9 @@ Everything here is unit-testable and every number it produces can be explained
 to a lead without saying "the AI decided".
 
 The key judgement encoded here is what counts as a *meaningful agent action*.
-Getting that wrong is what makes these tools nag about tickets that are
-actually being worked, so system accounts, SLA recalculations and the caller's
-own updates are all excluded from the idle clock.
+Misjudging it is what causes tools of this kind to report incidents that are
+in fact being progressed, so system accounts, SLA recalculations and the
+caller's own updates are all excluded from the inactivity clock.
 """
 
 import datetime
@@ -16,6 +16,28 @@ import re
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 TS_FORMAT = '%Y-%m-%d %H:%M:%S'
+
+# --- Vocabulary -----------------------------------------------------------
+# Two related but deliberately separate sets of terms:
+#
+#   Timeline roles      - who performed a recorded event. AGENT is a named
+#                         individual who touched the incident.
+#   Pending action owner - which party owes the next action. SERVICE_DESK is
+#                         the team, because an unassigned incident is still
+#                         the Service Desk's responsibility and has no agent
+#                         to attribute it to.
+#
+# Keeping them distinct avoids claiming an individual owes an action when no
+# individual has been assigned.
+
+AGENT_ROLE = 'AGENT'
+CALLER_ROLE = 'CALLER'
+SYSTEM_ROLE = 'SYSTEM'
+
+SERVICE_DESK = 'SERVICE_DESK'
+PENDING_ACTION_OWNERS = (
+    SERVICE_DESK, 'CALLER', 'VENDOR', 'CHANGE', 'PROBLEM', 'APPROVAL',
+)
 
 # History fields that represent a human progressing the ticket.
 AGENT_ACTION_FIELDS = {
@@ -87,17 +109,17 @@ def _days_between(later: Optional[datetime.datetime],
 
 def classify_actor(user_name: str, caller_name: str,
                    system_accounts: Sequence[str]) -> str:
-    """AGENT | CALLER | SYSTEM."""
+    """Classify the actor behind a history event: AGENT, CALLER or SYSTEM."""
     name = (user_name or '').strip().lower()
     if not name:
-        return 'SYSTEM'
+        return SYSTEM_ROLE
     if name in {a.lower() for a in system_accounts}:
-        return 'SYSTEM'
+        return SYSTEM_ROLE
     if name.endswith('.rest') or name.startswith('system') or name in ('guest', 'admin'):
-        return 'SYSTEM'
+        return SYSTEM_ROLE
     if caller_name and name == caller_name.strip().lower():
-        return 'CALLER'
-    return 'AGENT'
+        return CALLER_ROLE
+    return AGENT_ROLE
 
 
 def build_timeline(history: List[Dict[str, Any]], caller_name: str,
@@ -150,7 +172,7 @@ def build_timeline(history: List[Dict[str, Any]], caller_name: str,
 
 def last_meaningful_agent_action(timeline: List[Dict[str, Any]]) -> Optional[datetime.datetime]:
     for event in reversed(timeline):
-        if event['role'] != 'AGENT':
+        if event['role'] != AGENT_ROLE:
             continue
         if event['field'] in SYSTEM_NOISE_FIELDS:
             continue
@@ -162,51 +184,55 @@ def last_meaningful_agent_action(timeline: List[Dict[str, Any]]) -> Optional[dat
 
 def last_caller_activity(timeline: List[Dict[str, Any]]) -> Optional[datetime.datetime]:
     for event in reversed(timeline):
-        if event['role'] == 'CALLER':
+        if event['role'] == CALLER_ROLE:
             stamp = parse_ts(event['when'])
             if stamp:
                 return stamp
     return None
 
 
-def determine_ball_in_court(ticket: Dict[str, Any], timeline: List[Dict[str, Any]],
-                            caller_replied_unanswered: bool,
-                            dependency_resolved: bool) -> str:
-    """Who owes the next action.
+def determine_pending_action_owner(ticket: Dict[str, Any],
+                                   timeline: List[Dict[str, Any]],
+                                   caller_replied_unanswered: bool,
+                                   dependency_resolved: bool) -> str:
+    """Identify the party responsible for the next action on this ticket.
 
-    This is the field leads care about most: it turns "40 aged tickets" into
-    "9 that are actually ours".
+    This is the single most useful field for a lead, because it separates the
+    aged backlog into incidents the Service Desk must act on and incidents
+    that are legitimately waiting on someone else.
+
+    Returns one of PENDING_ACTION_OWNERS. SERVICE_DESK is the team rather than
+    an individual, because an unassigned incident is still Service Desk work.
     """
-    # A dependency that has already closed puts the ball straight back with us,
-    # regardless of what the hold reason still says.
+    # A dependency that has already closed returns responsibility to the
+    # Service Desk, irrespective of what the hold reason still states.
     if dependency_resolved:
-        return 'AGENT'
+        return SERVICE_DESK
 
-    # A caller who replied and got no answer is always our move.
+    # A caller who has replied without receiving a response is always
+    # Service Desk work.
     if caller_replied_unanswered:
-        return 'AGENT'
+        return SERVICE_DESK
 
     hold_reason = (ticket.get('hold_reason') or '').strip().lower()
     if hold_reason:
-        for needle, blocker in HOLD_REASON_BLOCKER.items():
+        for needle, owner in HOLD_REASON_BLOCKER.items():
             if needle in hold_reason:
-                return blocker
+                return owner
 
     state = (ticket.get('state') or '').strip().lower()
     if state == 'new' or not (ticket.get('assigned_to') or '').strip():
-        return 'AGENT'
+        return SERVICE_DESK
 
-    if timeline:
-        last_role = timeline[-1]['role']
-        if last_role == 'CALLER':
-            return 'AGENT'
+    if timeline and timeline[-1]['role'] == CALLER_ROLE:
+        return SERVICE_DESK
 
-    return 'AGENT'
+    return SERVICE_DESK
 
 
 def count_followups(timeline: List[Dict[str, Any]],
                     since: Optional[datetime.datetime] = None) -> Tuple[int, Optional[datetime.datetime]]:
-    """Customer-visible agent comments that read like a chase.
+    """Customer-visible agent comments that constitute a documented follow-up.
 
     Used for the auto-close policy - "three documented attempts, no reply".
     """
@@ -214,7 +240,7 @@ def count_followups(timeline: List[Dict[str, Any]],
     last_at: Optional[datetime.datetime] = None
 
     for event in timeline:
-        if event['role'] != 'AGENT':
+        if event['role'] != AGENT_ROLE:
             continue
         if event['field'] not in CUSTOMER_VISIBLE_FIELDS:
             continue
@@ -310,7 +336,7 @@ def extract_signals(ticket: Dict[str, Any], history: List[Dict[str, Any]],
 
     dependency = evaluate_dependency(ticket, change_record, problem_record)
 
-    ball_in_court = determine_ball_in_court(
+    pending_action_owner = determine_pending_action_owner(
         ticket, timeline, caller_replied_unanswered, dependency['dependency_resolved'])
 
     followup_count, last_followup_at = count_followups(timeline)
@@ -322,12 +348,12 @@ def extract_signals(ticket: Dict[str, Any], history: List[Dict[str, Any]],
     state_since = parse_ts(state_changes[-1]['when']) if state_changes else opened_at
     days_in_state = _days_between(now, state_since) or age_days
 
-    # Auto-close eligibility: enough documented chases, caller silent since.
-    silence_days = thresholds.get('auto_close_silence_days', 5)
-    required_followups = thresholds.get('auto_close_followups', 3)
+    # Closure eligibility: sufficient documented follow-ups, caller silent since.
+    silence_days = thresholds.get('closure_silence_days', 5)
+    required_followups = thresholds.get('closure_followup_count', 3)
     days_since_last_followup = _days_between(now, last_followup_at)
     auto_close_candidate = bool(
-        ball_in_court == 'CALLER'
+        pending_action_owner == 'CALLER'
         and followup_count >= required_followups
         and not caller_replied_unanswered
         and days_since_last_followup is not None
@@ -335,7 +361,7 @@ def extract_signals(ticket: Dict[str, Any], history: List[Dict[str, Any]],
     )
 
     expected_hours = (baseline or {}).get('p90_hours')
-    p90_overrun = bool(expected_hours and (age_days * 24.0) > float(expected_hours))
+    duration_overrun = bool(expected_hours and (age_days * 24.0) > float(expected_hours))
 
     signals: Dict[str, Any] = {
         'age_days': age_days,
@@ -344,7 +370,7 @@ def extract_signals(ticket: Dict[str, Any], history: List[Dict[str, Any]],
         'last_agent_action_at': agent_action_at,
         'last_caller_activity_at': caller_activity_at,
 
-        'ball_in_court': ball_in_court,
+        'pending_action_owner': pending_action_owner,
         'caller_replied_unanswered': caller_replied_unanswered,
 
         'dependency_ref': dependency['dependency_ref'],
@@ -362,7 +388,7 @@ def extract_signals(ticket: Dict[str, Any], history: List[Dict[str, Any]],
         'vendor_sla_breached': bool(sla_summary.get('vendor_sla_breached')),
 
         'expected_resolution_hours': expected_hours,
-        'p90_overrun': p90_overrun,
+        'duration_overrun': duration_overrun,
 
         'kb_available': bool(kb_available),
         'kb_attached': bool(attached_kb),
@@ -378,22 +404,22 @@ def derive_risk_flags(signals: Dict[str, Any], thresholds: Dict[str, Any]) -> Li
     """Human-readable flags. These drive the stream-tier alerts and the UI chips."""
     flags: List[str] = []
 
-    jeopardy_pct = thresholds.get('sla_jeopardy_pct', 75)
-    stagnation = thresholds.get('stagnation_days', 2)
-    critical_stagnation = thresholds.get('critical_stagnation_days', 4)
+    jeopardy_pct = thresholds.get('sla_risk_pct', 75)
+    stagnation = thresholds.get('inactivity_days', 2)
+    critical_stagnation = thresholds.get('prolonged_inactivity_days', 4)
 
     if signals.get('sla_breached'):
         flags.append('SLA_BREACHED')
     elif (signals.get('sla_pct_consumed') or 0) >= jeopardy_pct:
-        flags.append('SLA_JEOPARDY')
+        flags.append('SLA_AT_RISK')
 
     if signals.get('idle_days', 0) >= critical_stagnation:
-        flags.append('CRITICALLY_STALE')
+        flags.append('PROLONGED_INACTIVITY')
     elif signals.get('idle_days', 0) >= stagnation:
-        flags.append('STALE')
+        flags.append('NO_RECENT_ACTIVITY')
 
     # A third-party overrun is not our SLA breach, but it is the evidence that
-    # makes chasing the vendor urgent - so it gets its own flag.
+    # makes escalation to the vendor urgent, so it carries its own flag.
     if signals.get('vendor_sla_breached'):
         flags.append('VENDOR_SLA_BREACHED')
 
@@ -404,15 +430,15 @@ def derive_risk_flags(signals: Dict[str, Any], thresholds: Dict[str, Any]) -> Li
         flags.append('DEPENDENCY_CLEARED')
 
     if signals.get('auto_close_candidate'):
-        flags.append('AUTO_CLOSE_CANDIDATE')
+        flags.append('CLOSURE_CANDIDATE')
 
-    if signals.get('p90_overrun'):
-        flags.append('PAST_EXPECTED_DURATION')
+    if signals.get('duration_overrun'):
+        flags.append('EXPECTED_DURATION_EXCEEDED')
 
     if signals.get('kb_available') and not signals.get('kb_attached'):
-        flags.append('KB_NOT_ATTACHED')
+        flags.append('KB_ARTICLE_NOT_LINKED')
 
     if signals.get('last_agent_action_at') is None:
-        flags.append('NEVER_TOUCHED')
+        flags.append('NO_ACTION_RECORDED')
 
     return flags

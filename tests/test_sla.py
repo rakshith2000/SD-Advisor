@@ -5,7 +5,7 @@ of the explicit map is that it matches the instance it was built for. If
 someone renames a definition in ServiceNow these tests still pass (sys_id
 keyed) - which is the property we want.
 
-SLA state feeds sla_jeopardy, the joint-largest component of the attention
+SLA state feeds sla_risk, the joint-largest component of the attention
 score, so a misclassification here silently reorders the entire board.
 """
 
@@ -319,7 +319,7 @@ class TestDownstream:
         assert 'VENDOR_SLA_BREACHED' in signals['risk_flags']
         assert 'SLA_BREACHED' not in signals['risk_flags']
 
-    def test_vendor_breach_lifts_the_score_via_blocked_stale(self):
+    def test_vendor_breach_lifts_the_score_via_unactioned_delay(self):
         from pipeline.scoring import DEFAULT_WEIGHTS, compute_attention_score
         ticket = {'priority': '3 - Medium', 'reassignment_count': 0, 'reopen_count': 0}
         base = {'age_days': 8.0, 'idle_days': 1.0, 'sla_breached': False,

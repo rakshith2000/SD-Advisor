@@ -7,8 +7,8 @@ UI. Three ideas drive the shape of this:
     rows are the whole job on a normal day.
   * Show the delta. A lead who saw the same 40 rows yesterday needs to know
     which 6 are new or newly worse, so movement is computed explicitly.
-  * Group by who is blocking. "9 of these are actually ours" is the sentence
-    that saves the time.
+  * Group by pending action owner. "9 of these require Service Desk action"
+    is the sentence that saves a lead the most time.
 """
 
 import datetime
@@ -17,38 +17,40 @@ from typing import Any, Dict, List, Optional
 
 from core.logging_setup import get_logger
 from pipeline.scoring import top_reasons
+from pipeline.signals import SERVICE_DESK
 
 log = get_logger('delivery.digest')
 
 ACTION_LABELS = {
-    'RESOLVE': 'Resolve now',
+    'RESOLVE': 'Resolve',
     'FOLLOW_UP_CALLER': 'Follow up with caller',
-    'CHASE_VENDOR': 'Chase vendor',
+    'CHASE_VENDOR': 'Escalate to vendor',
     'REASSIGN': 'Reassign',
     'ESCALATE': 'Escalate',
-    'AWAIT_DEPENDENCY': 'Waiting on dependency',
-    'CLOSE_STALE': 'Close (no response)',
-    'NO_ACTION_NEEDED': 'On track',
+    'AWAIT_DEPENDENCY': 'Awaiting dependency',
+    'CLOSE_STALE': 'Close - no caller response',
+    'NO_ACTION_NEEDED': 'No action required',
 }
 
 FLAG_LABELS = {
     'SLA_BREACHED': 'SLA breached',
-    'SLA_JEOPARDY': 'SLA at risk',
+    'SLA_AT_RISK': 'SLA at risk',
     'VENDOR_SLA_BREACHED': 'Vendor SLA breached',
-    'CRITICALLY_STALE': 'No action 4+ days',
-    'STALE': 'No recent action',
-    'CALLER_AWAITING_REPLY': 'Caller awaiting reply',
-    'DEPENDENCY_CLEARED': 'Blocker already closed',
-    'AUTO_CLOSE_CANDIDATE': 'Closure candidate',
-    'PAST_EXPECTED_DURATION': 'Past expected time',
-    'KB_NOT_ATTACHED': 'KB not attached',
-    'NEVER_TOUCHED': 'Never actioned',
-    'INJECTION_SUSPECTED': 'Suspicious content',
-    'UNKNOWN_TARGET_GROUP': 'Unverified target group',
+    'PROLONGED_INACTIVITY': 'Prolonged inactivity',
+    'NO_RECENT_ACTIVITY': 'No recent activity',
+    'CALLER_AWAITING_REPLY': 'Caller awaiting response',
+    'DEPENDENCY_CLEARED': 'Dependency already closed',
+    'CLOSURE_CANDIDATE': 'Closure candidate',
+    'EXPECTED_DURATION_EXCEEDED': 'Expected duration exceeded',
+    'KB_ARTICLE_NOT_LINKED': 'Knowledge article not linked',
+    'NO_ACTION_RECORDED': 'No action recorded',
+    'INJECTION_SUSPECTED': 'Content requires review',
+    'UNVERIFIED_TARGET_GROUP': 'Unverified target group',
 }
 
-BALL_LABELS = {
-    'AGENT': 'Us',
+# Values of pending_action_owner, as presented to leads and agents.
+PENDING_ACTION_OWNER_LABELS = {
+    'SERVICE_DESK': 'Service Desk',
     'CALLER': 'Caller',
     'VENDOR': 'Vendor',
     'CHANGE': 'Change',
@@ -114,7 +116,8 @@ class DigestBuilder:
 
         action = row.get('recommended_action') or ''
         item['action_label'] = ACTION_LABELS.get(action, action.replace('_', ' ').title() or 'Not analysed')
-        item['ball_label'] = BALL_LABELS.get(row.get('ball_in_court') or '', row.get('ball_in_court') or '-')
+        item['pending_action_owner_label'] = PENDING_ACTION_OWNER_LABELS.get(
+            row.get('pending_action_owner') or '', row.get('pending_action_owner') or '-')
 
         item['severity'] = self._severity(row.get('attention_score') or 0)
         item['confidence_pct'] = int(round(float(row.get('confidence') or 0) * 100))
@@ -185,26 +188,28 @@ class DigestBuilder:
     # -- aggregation -------------------------------------------------------
 
     def summarise(self, rows: List[Dict[str, Any]]) -> Dict[str, Any]:
-        by_ball: Dict[str, int] = {}
+        by_owner: Dict[str, int] = {}
         by_action: Dict[str, int] = {}
 
         for row in rows:
-            by_ball[row.get('ball_label', '-')] = by_ball.get(row.get('ball_label', '-'), 0) + 1
-            label = row.get('action_label', 'Not analysed')
-            by_action[label] = by_action.get(label, 0) + 1
+            owner = row.get('pending_action_owner_label', '-')
+            by_owner[owner] = by_owner.get(owner, 0) + 1
+            action = row.get('action_label', 'Not analysed')
+            by_action[action] = by_action.get(action, 0) + 1
 
         return {
             'total': len(rows),
-            'ours': sum(1 for r in rows if r.get('ball_in_court') == 'AGENT'),
+            'service_desk_owned': sum(
+                1 for r in rows if r.get('pending_action_owner') == SERVICE_DESK),
             'sla_breached': sum(1 for r in rows if r.get('sla_breached')),
-            'sla_at_risk': sum(1 for r in rows if 'SLA_JEOPARDY' in (r.get('risk_flags') or [])),
-            'critically_stale': sum(1 for r in rows
-                                    if 'CRITICALLY_STALE' in (r.get('risk_flags') or [])),
+            'sla_at_risk': sum(1 for r in rows if 'SLA_AT_RISK' in (r.get('risk_flags') or [])),
+            'prolonged_inactivity': sum(1 for r in rows
+                                        if 'PROLONGED_INACTIVITY' in (r.get('risk_flags') or [])),
             'caller_awaiting': sum(1 for r in rows if r.get('caller_replied_unanswered')),
             'dependency_cleared': sum(1 for r in rows if r.get('dependency_resolved')),
-            'close_candidates': sum(1 for r in rows if r.get('auto_close_candidate')),
+            'closure_candidates': sum(1 for r in rows if r.get('auto_close_candidate')),
             'needs_review': sum(1 for r in rows if r.get('low_confidence')),
-            'by_ball': by_ball,
+            'by_pending_action_owner': by_owner,
             'by_action': by_action,
         }
 
@@ -226,11 +231,11 @@ class DigestBuilder:
                 'avg_score': int(round(sum(scores) / len(scores))) if scores else 0,
                 'avg_idle_days': round(sum(idles) / len(idles), 1) if idles else 0.0,
                 'sla_breached': sum(1 for t in tickets if t.get('sla_breached')),
-                'critically_stale': sum(1 for t in tickets
-                                        if 'CRITICALLY_STALE' in (t.get('risk_flags') or [])),
+                'prolonged_inactivity': sum(1 for t in tickets
+                                        if 'PROLONGED_INACTIVITY' in (t.get('risk_flags') or [])),
                 'caller_awaiting': sum(1 for t in tickets if t.get('caller_replied_unanswered')),
                 'kb_gaps': sum(1 for t in tickets
-                               if 'KB_NOT_ATTACHED' in (t.get('risk_flags') or [])),
+                               if 'KB_ARTICLE_NOT_LINKED' in (t.get('risk_flags') or [])),
                 'tickets': sorted(tickets, key=lambda t: -(t.get('attention_score') or 0)),
             })
 
@@ -297,7 +302,7 @@ class DigestBuilder:
             'tickets': priority_rows,
             'truncated': max(0, len(rows) - len(priority_rows)),
             'agents': agents,
-            'close_candidates': [r for r in rows if r.get('auto_close_candidate')][:10],
+            'closure_candidates': [r for r in rows if r.get('auto_close_candidate')][:10],
             'base_url': self.base_url,
             'shadow_mode': self.settings.shadow_mode,
             'reasons': {r['incident_number']: self._reasons_for(r) for r in priority_rows},

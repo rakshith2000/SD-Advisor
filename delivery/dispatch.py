@@ -86,7 +86,7 @@ class Dispatcher:
         summary = payload['summary']
         subject = (
             f"Aged ticket review - {summary['total']} open, "
-            f"{summary['ours']} waiting on us"
+            f"{summary['service_desk_owned']} awaiting Service Desk action"
         )
         if summary['sla_breached']:
             subject += f", {summary['sla_breached']} SLA breached"

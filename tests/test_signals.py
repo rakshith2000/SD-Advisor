@@ -17,7 +17,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from pipeline.signals import (build_timeline, classify_actor, count_followups,
-                              determine_ball_in_court, evaluate_dependency,
+                              determine_pending_action_owner, evaluate_dependency,
                               extract_signals, last_caller_activity,
                               last_meaningful_agent_action, priority_weight)
 
@@ -143,7 +143,7 @@ class TestIdleClock:
                                   system_accounts=SYSTEM_ACCOUNTS, now=NOW)
         assert signals['idle_days'] == pytest.approx(9.0, abs=0.01)
         assert signals['last_agent_action_at'] is None
-        assert 'NEVER_TOUCHED' in signals['risk_flags']
+        assert 'NO_ACTION_RECORDED' in signals['risk_flags']
 
     def test_system_update_does_not_reset_the_clock(self):
         """The bug this guards against: an SLA recalculation making a ticket
@@ -202,14 +202,14 @@ class TestCallerReplied:
         signals = extract_signals(make_ticket(hold_reason='Awaiting Caller'),
                                   history, NO_SLA,
                                   system_accounts=SYSTEM_ACCOUNTS, now=NOW)
-        assert signals['ball_in_court'] == 'AGENT'
+        assert signals['pending_action_owner'] == 'SERVICE_DESK'
 
 
 # ---------------------------------------------------------------------------
-# ball in court
+# pending action owner
 # ---------------------------------------------------------------------------
 
-class TestBallInCourt:
+class TestPendingActionOwner:
     @pytest.mark.parametrize('hold_reason,expected', [
         ('Awaiting Caller', 'CALLER'),
         ('Awaiting Customer', 'CALLER'),
@@ -220,19 +220,19 @@ class TestBallInCourt:
     ])
     def test_maps_hold_reasons(self, hold_reason, expected):
         ticket = make_ticket(hold_reason=hold_reason)
-        assert determine_ball_in_court(ticket, [], False, False) == expected
+        assert determine_pending_action_owner(ticket, [], False, False) == expected
 
-    def test_unknown_hold_reason_falls_back_to_agent(self):
+    def test_unrecognised_hold_reason_falls_back_to_service_desk(self):
         ticket = make_ticket(hold_reason='Something bespoke')
-        assert determine_ball_in_court(ticket, [], False, False) == 'AGENT'
+        assert determine_pending_action_owner(ticket, [], False, False) == 'SERVICE_DESK'
 
-    def test_unassigned_ticket_is_ours(self):
+    def test_unassigned_incident_is_service_desk_owned(self):
         ticket = make_ticket(assigned_to='', hold_reason='')
-        assert determine_ball_in_court(ticket, [], False, False) == 'AGENT'
+        assert determine_pending_action_owner(ticket, [], False, False) == 'SERVICE_DESK'
 
-    def test_cleared_dependency_returns_the_ball_to_us(self):
+    def test_cleared_dependency_returns_responsibility_to_the_service_desk(self):
         ticket = make_ticket(hold_reason='Awaiting Change')
-        assert determine_ball_in_court(ticket, [], False, True) == 'AGENT'
+        assert determine_pending_action_owner(ticket, [], False, True) == 'SERVICE_DESK'
 
 
 # ---------------------------------------------------------------------------
@@ -263,7 +263,7 @@ class TestDependency:
             change_record={'number': 'CHG0044321', 'state': 'Closed Complete'},
             system_accounts=SYSTEM_ACCOUNTS, now=NOW)
         assert 'DEPENDENCY_CLEARED' in signals['risk_flags']
-        assert signals['ball_in_court'] == 'AGENT'
+        assert signals['pending_action_owner'] == 'SERVICE_DESK'
 
 
 # ---------------------------------------------------------------------------
@@ -292,9 +292,9 @@ class TestFollowUps:
         signals = extract_signals(
             make_ticket(hold_reason='Awaiting Caller'), history, NO_SLA,
             system_accounts=SYSTEM_ACCOUNTS, now=NOW,
-            thresholds={'auto_close_followups': 3, 'auto_close_silence_days': 5})
+            thresholds={'closure_followup_count': 3, 'closure_silence_days': 5})
         assert signals['auto_close_candidate'] is True
-        assert 'AUTO_CLOSE_CANDIDATE' in signals['risk_flags']
+        assert 'CLOSURE_CANDIDATE' in signals['risk_flags']
 
     def test_not_a_candidate_when_the_caller_has_since_replied(self):
         history = [
@@ -306,7 +306,7 @@ class TestFollowUps:
         signals = extract_signals(
             make_ticket(hold_reason='Awaiting Caller'), history, NO_SLA,
             system_accounts=SYSTEM_ACCOUNTS, now=NOW,
-            thresholds={'auto_close_followups': 3, 'auto_close_silence_days': 5})
+            thresholds={'closure_followup_count': 3, 'closure_silence_days': 5})
         assert signals['auto_close_candidate'] is False
 
     def test_not_a_candidate_below_the_attempt_threshold(self):
@@ -314,7 +314,7 @@ class TestFollowUps:
         signals = extract_signals(
             make_ticket(hold_reason='Awaiting Caller'), history, NO_SLA,
             system_accounts=SYSTEM_ACCOUNTS, now=NOW,
-            thresholds={'auto_close_followups': 3, 'auto_close_silence_days': 5})
+            thresholds={'closure_followup_count': 3, 'closure_silence_days': 5})
         assert signals['auto_close_candidate'] is False
 
 
@@ -335,22 +335,22 @@ class TestSlaAndBaselines:
                'sla_time_left_mins': 120.0, 'projected_breach_at': None}
         signals = extract_signals(make_ticket(), [], sla,
                                   system_accounts=SYSTEM_ACCOUNTS, now=NOW,
-                                  thresholds={'sla_jeopardy_pct': 75})
-        assert 'SLA_JEOPARDY' in signals['risk_flags']
+                                  thresholds={'sla_risk_pct': 75})
+        assert 'SLA_AT_RISK' in signals['risk_flags']
         assert 'SLA_BREACHED' not in signals['risk_flags']
 
-    def test_p90_overrun_uses_the_category_baseline(self):
+    def test_duration_overrun_uses_the_category_baseline(self):
         # 9 days old = 216 hours, well past a 48-hour p90.
         signals = extract_signals(make_ticket(), [], NO_SLA,
                                   baseline={'p90_hours': 48.0},
                                   system_accounts=SYSTEM_ACCOUNTS, now=NOW)
-        assert signals['p90_overrun'] is True
-        assert 'PAST_EXPECTED_DURATION' in signals['risk_flags']
+        assert signals['duration_overrun'] is True
+        assert 'EXPECTED_DURATION_EXCEEDED' in signals['risk_flags']
 
     def test_no_baseline_means_no_overrun_claim(self):
         signals = extract_signals(make_ticket(), [], NO_SLA,
                                   system_accounts=SYSTEM_ACCOUNTS, now=NOW)
-        assert signals['p90_overrun'] is False
+        assert signals['duration_overrun'] is False
 
 
 # ---------------------------------------------------------------------------
@@ -361,7 +361,7 @@ def test_kb_available_but_not_attached_is_flagged():
     signals = extract_signals(make_ticket(), [], NO_SLA, attached_kb=[],
                               kb_available=True,
                               system_accounts=SYSTEM_ACCOUNTS, now=NOW)
-    assert 'KB_NOT_ATTACHED' in signals['risk_flags']
+    assert 'KB_ARTICLE_NOT_LINKED' in signals['risk_flags']
 
 
 def test_attached_kb_clears_the_flag():
@@ -369,7 +369,7 @@ def test_attached_kb_clears_the_flag():
                               attached_kb=[{'kb_knowledge': 'KB0010001'}],
                               kb_available=True,
                               system_accounts=SYSTEM_ACCOUNTS, now=NOW)
-    assert 'KB_NOT_ATTACHED' not in signals['risk_flags']
+    assert 'KB_ARTICLE_NOT_LINKED' not in signals['risk_flags']
 
 
 # ---------------------------------------------------------------------------
@@ -390,7 +390,7 @@ def test_extract_signals_is_total_on_an_empty_ticket():
     a KeyError here would take out the whole nightly pass."""
     signals = extract_signals({'incident_number': 'INC0', 'opened_at': ts(6)},
                               [], NO_SLA, system_accounts=[], now=NOW)
-    for key in ('age_days', 'idle_days', 'ball_in_court', 'risk_flags',
+    for key in ('age_days', 'idle_days', 'pending_action_owner', 'risk_flags',
                 'followup_count', 'auto_close_candidate'):
         assert key in signals
 

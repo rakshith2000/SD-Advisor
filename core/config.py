@@ -10,15 +10,55 @@ import threading
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from core.logging_setup import get_logger
+
+log = get_logger('core.config')
+
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_CONFIG_PATH = PROJECT_ROOT / 'config' / 'conf.json'
 
 _lock = threading.Lock()
 _settings: Optional['Settings'] = None
 
+# Threshold keys renamed when the vocabulary was formalised. A configuration
+# file written against the old names still works, because silently falling back
+# to a default would change scoring behaviour with nothing in the logs to
+# explain it.
+LEGACY_THRESHOLD_KEYS = {
+    'stagnation_days': 'inactivity_days',
+    'critical_stagnation_days': 'prolonged_inactivity_days',
+    'sla_jeopardy_pct': 'sla_risk_pct',
+    'auto_close_followups': 'closure_followup_count',
+    'auto_close_silence_days': 'closure_silence_days',
+}
+
 
 class ConfigError(RuntimeError):
     pass
+
+
+def normalise_thresholds(raw: Dict[str, Any]) -> Dict[str, Any]:
+    """Accept the superseded threshold key names, warning once for each.
+
+    The current name always wins if both are present.
+    """
+    thresholds = dict(raw or {})
+    for legacy, current in LEGACY_THRESHOLD_KEYS.items():
+        if legacy not in thresholds:
+            continue
+        value = thresholds.pop(legacy)
+        if current in thresholds:
+            log.warning(
+                "Configuration contains both 'thresholds.%s' (superseded) and "
+                "'thresholds.%s'; using the latter. Remove the superseded key.",
+                legacy, current)
+        else:
+            thresholds[current] = value
+            log.warning(
+                "Configuration key 'thresholds.%s' has been renamed to "
+                "'thresholds.%s'. The supplied value (%s) has been applied, but "
+                "please update config/conf.json.", legacy, current, value)
+    return thresholds
 
 
 class Settings:

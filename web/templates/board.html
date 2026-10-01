@@ -32,17 +32,18 @@
 
 <div class="tiles">
   {{ tile('Aged tickets', summary.total, 'in your scope', none) }}
-  {{ tile('Waiting on us', summary.ours, 'the rest are blocked elsewhere',
-          'critical' if summary.ours else 'good') }}
+  {{ tile('Awaiting Service Desk', summary.service_desk_owned,
+          'remainder are awaiting other parties',
+          'critical' if summary.service_desk_owned else 'good') }}
   {{ tile('SLA breached', summary.sla_breached, summary.sla_at_risk ~ ' more at risk',
           'critical' if summary.sla_breached else 'good') }}
-  {{ tile('No action 4+ days', summary.critically_stale, 'needs a nudge',
-          'serious' if summary.critically_stale else 'good') }}
-  {{ tile('Caller awaiting reply', summary.caller_awaiting, 'we owe a response',
+  {{ tile('Prolonged inactivity', summary.prolonged_inactivity, 'no Service Desk action for 4+ days',
+          'serious' if summary.prolonged_inactivity else 'good') }}
+  {{ tile('Caller awaiting response', summary.caller_awaiting, 'Service Desk response outstanding',
           'serious' if summary.caller_awaiting else 'good') }}
-  {{ tile('Blocker cleared', summary.dependency_cleared, 'change or problem already closed',
+  {{ tile('Dependency cleared', summary.dependency_cleared, 'change or problem already closed',
           'warning' if summary.dependency_cleared else 'good') }}
-  {{ tile('Closure candidates', summary.close_candidates, 'follow-ups exhausted', none) }}
+  {{ tile('Closure candidates', summary.closure_candidates, 'documented follow-ups exhausted', none) }}
   {{ tile('Needs your judgement', summary.needs_review, 'low model confidence', none) }}
 </div>
 
@@ -86,7 +87,7 @@
     <label for="ball">Blocked by</label>
     <select id="ball" name="ball">
       <option value="">Anyone</option>
-      {% for key, label in BALL_LABELS.items() %}
+      {% for key, label in PENDING_ACTION_OWNER_LABELS.items() %}
       <option value="{{ key }}" {{ 'selected' if filters.ball == key }}>{{ label }}</option>
       {% endfor %}
     </select>
@@ -168,7 +169,7 @@
             {% if row.flag_labels %}
             <div class="chips">
               {% for flag in row.flag_labels[:5] %}
-              <span class="chip {{ 'alert' if flag in ('SLA breached', 'No action 4+ days') }}">{{ flag }}</span>
+              <span class="chip {{ 'alert' if flag in ('SLA breached', 'Prolonged inactivity') }}">{{ flag }}</span>
               {% endfor %}
             </div>
             {% endif %}
@@ -182,7 +183,7 @@
           <td class="num">{{ row.age_days_display }}d</td>
           <td class="num">{{ row.idle_days_display }}d</td>
 
-          <td><strong>{{ row.ball_label }}</strong></td>
+          <td><strong>{{ row.pending_action_owner_label }}</strong></td>
 
           <td style="max-width:340px;">
             {% if row.recommended_action %}
@@ -191,7 +192,7 @@
             <span class="subtle">&rarr; {{ row.suggested_target_group }}</span>
             {% endif %}
             <div class="subtle" style="margin-top:2px;">
-              {% if row.low_confidence %}Needs your review &middot; {% endif %}{{ row.confidence_pct }}% confidence
+              {% if row.low_confidence %}Requires review &middot; {% endif %}{{ row.confidence_pct }}% confidence
             </div>
             {% if row.rationale %}
             <div class="subtle" style="margin-top:3px;color:var(--text-secondary);">

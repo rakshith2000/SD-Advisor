@@ -196,7 +196,7 @@
           </div>
           <div class="field" style="margin-bottom:10px;">
             <label for="comment">Comment (optional)</label>
-            <textarea id="comment" name="comment" placeholder="What did we miss?"></textarea>
+            <textarea id="comment" name="comment" placeholder="Optional: what was incorrect or missing?"></textarea>
           </div>
           <button class="btn primary" type="submit" style="width:100%;">Record verdict</button>
         </form>
@@ -236,7 +236,7 @@
       <div class="card-head"><h2>Signals</h2></div>
       <div class="card-body">
         <dl class="kv">
-          <dt>Blocked by</dt><dd><strong>{{ row.ball_label }}</strong></dd>
+          <dt>Pending action owner</dt><dd><strong>{{ row.pending_action_owner_label }}</strong></dd>
           <dt>Age</dt><dd class="tnum">{{ row.age_days_display }} days</dd>
           <dt>Idle</dt><dd class="tnum">{{ row.idle_days_display }} days</dd>
           <dt>Last agent action</dt>

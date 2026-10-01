@@ -45,7 +45,7 @@
     </div>
     <div style="font:400 12px/1.6 {{ FONT }};color:{{ INK2 }};padding-top:10px;">
       <strong style="color:{{ INK }};">{{ summary.total }}</strong> aged
-      &middot; <strong style="color:{{ CRITICAL if summary.ours else GOOD }};">{{ summary.ours }}</strong> waiting on you
+      &middot; <strong style="color:{{ CRITICAL if summary.service_desk_owned else GOOD }};">{{ summary.service_desk_owned }}</strong> awaiting your action
       {%- if summary.sla_breached %} &middot; <strong style="color:{{ CRITICAL }};">{{ summary.sla_breached }}</strong> SLA breached{% endif %}
       {%- if summary.caller_awaiting %} &middot; <strong style="color:{{ SERIOUS }};">{{ summary.caller_awaiting }}</strong> caller awaiting your reply{% endif %}
     </div>
@@ -74,7 +74,7 @@
                     font-variant-numeric:tabular-nums;">
           {{ severity_label(row.severity) }} &middot; {{ row.age_days_display }} days old
           &middot; idle {{ row.idle_days_display }} days
-          &middot; blocked by {{ row.ball_label }}
+          &middot; pending action owner: {{ row.pending_action_owner_label }}
           {%- if row.caller_name %} &middot; caller {{ row.caller_name }}{% endif %}
         </div>
         {% if row.flag_labels %}
@@ -100,7 +100,7 @@
         <div style="font:400 12px/1.5 {{ FONT }};color:{{ INK2 }};padding-top:4px;">{{ row.rationale }}</div>
         {% endif %}
         <div style="font:400 10px/1.4 {{ FONT }};color:{{ MUTED }};padding-top:4px;">
-          {% if row.low_confidence %}Low confidence, please sanity-check &middot; {% endif %}confidence {{ row.confidence_pct }}%
+          {% if row.low_confidence %}Low confidence - please verify &middot; {% endif %}confidence {{ row.confidence_pct }}%
         </div>
       </td></tr>
     </table>

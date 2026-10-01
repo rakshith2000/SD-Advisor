@@ -62,8 +62,8 @@
           <td class="num" style="{{ 'color:var(--status-critical);font-weight:600;' if entry.sla_breached }}">
             {{ entry.sla_breached }}
           </td>
-          <td class="num" style="{{ 'color:var(--status-serious);font-weight:600;' if entry.critically_stale }}">
-            {{ entry.critically_stale }}
+          <td class="num" style="{{ 'color:var(--status-serious);font-weight:600;' if entry.prolonged_inactivity }}">
+            {{ entry.prolonged_inactivity }}
           </td>
           <td class="num">{{ entry.caller_awaiting }}</td>
           <td class="num">{{ entry.kb_gaps }}</td>

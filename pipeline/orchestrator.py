@@ -121,7 +121,7 @@ class Orchestrator:
     def _kb_exists_for(self, ticket: Dict[str, Any]) -> bool:
         """Whether *any* KB article plausibly covers this ticket.
 
-        Drives the KB_NOT_ATTACHED coaching flag. Uses the vector index when
+        Drives the KB_ARTICLE_NOT_LINKED coaching flag. Uses the vector index when
         it is populated, so this costs one embedding at most and nothing when
         the index is empty.
         """
@@ -144,7 +144,7 @@ class Orchestrator:
             'days_in_state': signals.get('days_in_state') or 0,
             'last_agent_action_at': signals.get('last_agent_action_at'),
             'last_caller_activity_at': signals.get('last_caller_activity_at'),
-            'ball_in_court': signals.get('ball_in_court') or 'AGENT',
+            'pending_action_owner': signals.get('pending_action_owner') or 'AGENT',
             'caller_replied_unanswered': int(bool(signals.get('caller_replied_unanswered'))),
             'dependency_ref': signals.get('dependency_ref'),
             'dependency_state': signals.get('dependency_state'),
@@ -157,7 +157,7 @@ class Orchestrator:
             'sla_time_left_mins': signals.get('sla_time_left_mins'),
             'projected_breach_at': signals.get('projected_breach_at'),
             'expected_resolution_hours': signals.get('expected_resolution_hours'),
-            'p90_overrun': int(bool(signals.get('p90_overrun'))),
+            'duration_overrun': int(bool(signals.get('duration_overrun'))),
             'kb_available': int(bool(signals.get('kb_available'))),
             'kb_attached': int(bool(signals.get('kb_attached'))),
             'attention_score': scoring['score'],
@@ -308,12 +308,12 @@ class Orchestrator:
         Deduped via alert_log so a ticket that stays breached does not
         re-alert every ten minutes.
         """
-        alertable = {'SLA_BREACHED', 'SLA_JEOPARDY', 'CALLER_AWAITING_REPLY',
-                     'DEPENDENCY_CLEARED', 'CRITICALLY_STALE'}
+        alertable = {'SLA_BREACHED', 'SLA_AT_RISK', 'CALLER_AWAITING_REPLY',
+                     'DEPENDENCY_CLEARED', 'PROLONGED_INACTIVITY'}
 
         rows = self.db.query("""
             SELECT incident_number, assignment_group, assigned_to, short_description,
-                   attention_score, risk_flags, projected_breach_at, ball_in_court
+                   attention_score, risk_flags, projected_breach_at, pending_action_owner
               FROM v_current_board
              WHERE snoozed = 0
              ORDER BY attention_score DESC
@@ -342,7 +342,7 @@ class Orchestrator:
                     'channel': 'email',
                     'payload': json.dumps({
                         'attention_score': row.get('attention_score'),
-                        'ball_in_court': row.get('ball_in_court'),
+                        'pending_action_owner': row.get('pending_action_owner'),
                     }, default=str),
                 }, ignore=True)
 

@@ -239,7 +239,7 @@ class VaultClient:
                 if not self._renew():
                     self._login()
             except Exception:
-                # A Vault outage must not kill the service. Cached secrets keep
+                # A Vault outage must not terminate the service. Cached secrets keep
                 # working; retry shortly.
                 log.exception('Vault token refresh failed - retrying in %ss',
                               RENEW_RETRY_SECONDS)

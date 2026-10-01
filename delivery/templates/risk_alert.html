@@ -18,10 +18,10 @@
 
 {%- set ALERT_META = {
   'SLA_BREACHED':          ('SLA breached',            CRITICAL),
-  'SLA_JEOPARDY':          ('SLA about to breach',     SERIOUS),
-  'CRITICALLY_STALE':      ('No action for 4+ days',   SERIOUS),
+  'SLA_AT_RISK':          ('SLA about to breach',     SERIOUS),
+  'PROLONGED_INACTIVITY':      ('No action for 4+ days',   SERIOUS),
   'CALLER_AWAITING_REPLY': ('Caller awaiting a reply', WARNING),
-  'DEPENDENCY_CLEARED':    ('Blocker has closed',      ACCENT)
+  'DEPENDENCY_CLEARED':    ('Dependency has closed',   ACCENT)
 } -%}
 
 <!DOCTYPE html>
@@ -60,7 +60,7 @@
         <div style="font:400 11px/1.5 {{ FONT }};color:{{ MUTED }};padding-top:3px;
                     font-variant-numeric:tabular-nums;">
           {{ row.assigned_to or 'Unassigned' }} &middot; {{ row.assignment_group or '-' }}
-          &middot; score {{ row.attention_score }} &middot; blocked by {{ row.ball_label }}
+          &middot; score {{ row.attention_score }} &middot; pending action owner: {{ row.pending_action_owner_label }}
           {%- if row.projected_breach_at %} &middot; breaches {{ row.projected_breach_at.strftime('%d %b %H:%M') if row.projected_breach_at.strftime is defined else row.projected_breach_at }}{% endif %}
         </div>
       </td>

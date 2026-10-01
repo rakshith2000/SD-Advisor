@@ -17,8 +17,8 @@ from pipeline.retrieval import scope_key
 from pipeline.scoring import (DEFAULT_WEIGHTS, compute_attention_score,
                               top_reasons)
 
-THRESHOLDS = {'aged_after_days': 5, 'critical_stagnation_days': 4,
-              'stagnation_days': 2, 'sla_jeopardy_pct': 75}
+THRESHOLDS = {'aged_after_days': 5, 'prolonged_inactivity_days': 4,
+              'inactivity_days': 2, 'sla_risk_pct': 75}
 
 
 def base_ticket(**overrides):
@@ -33,7 +33,7 @@ def base_signals(**overrides):
         'sla_pct_consumed': 10.0, 'sla_time_left_mins': 5000.0,
         'caller_replied_unanswered': False, 'dependency_resolved': False,
         'auto_close_candidate': False, 'last_agent_action_at': 'set',
-        'p90_overrun': False, 'expected_resolution_hours': None,
+        'duration_overrun': False, 'expected_resolution_hours': None,
     }
     signals.update(overrides)
     return signals
@@ -46,7 +46,7 @@ class TestScoreBounds:
             base_signals(age_days=90, idle_days=60, sla_breached=True,
                          sla_pct_consumed=400.0, caller_replied_unanswered=True,
                          dependency_resolved=True, auto_close_candidate=True,
-                         last_agent_action_at=None, p90_overrun=True,
+                         last_agent_action_at=None, duration_overrun=True,
                          expected_resolution_hours=4.0),
             DEFAULT_WEIGHTS, THRESHOLDS)
         assert 0 <= worst['score'] <= 100
@@ -116,10 +116,10 @@ class TestAttribution:
         assert result['score'] == pytest.approx(round(total), abs=1)
 
     def test_a_disabled_component_contributes_nothing(self):
-        weights = dict(DEFAULT_WEIGHTS, stagnation=0)
+        weights = dict(DEFAULT_WEIGHTS, inactivity_duration=0)
         result = compute_attention_score(base_ticket(), base_signals(idle_days=30),
                                          weights, THRESHOLDS)
-        assert result['breakdown']['stagnation']['points'] == 0
+        assert result['breakdown']['inactivity_duration']['points'] == 0
 
     def test_top_reasons_are_ordered_and_nonzero(self):
         result = compute_attention_score(
@@ -128,7 +128,7 @@ class TestAttribution:
         reasons = top_reasons(result['breakdown'])
         assert reasons
         assert len(reasons) <= 3
-        assert 'churn' not in ' '.join(reasons)   # zero contributors are excluded
+        assert 'reassignment_activity' not in ' '.join(reasons)   # zero contributors are excluded
 
 
 class TestBlockedStale:

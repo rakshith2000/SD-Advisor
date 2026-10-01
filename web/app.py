@@ -19,7 +19,8 @@ from fastapi.templating import Jinja2Templates
 
 from core.context import get_context
 from core.logging_setup import get_logger
-from delivery.digest import ACTION_LABELS, BALL_LABELS, FLAG_LABELS, DigestBuilder
+from delivery.digest import (ACTION_LABELS, FLAG_LABELS,
+                             PENDING_ACTION_OWNER_LABELS, DigestBuilder)
 from delivery.dispatch import Dispatcher
 from pipeline.orchestrator import Orchestrator
 from pipeline.scoring import DEFAULT_WEIGHTS
@@ -79,7 +80,7 @@ def create_app(config_path: Optional[str] = None) -> FastAPI:
     templates.env.globals.update({
         'ACTION_LABELS': ACTION_LABELS,
         'FLAG_LABELS': FLAG_LABELS,
-        'BALL_LABELS': BALL_LABELS,
+        'PENDING_ACTION_OWNER_LABELS': PENDING_ACTION_OWNER_LABELS,
         'shadow_mode': ctx.settings.shadow_mode,
         'customer': ctx.settings.customer_name,
         'aged_after_days': ctx.settings.aged_after_days,
@@ -144,7 +145,7 @@ def create_app(config_path: Optional[str] = None) -> FastAPI:
                                   include_snoozed=show_snoozed, min_score=min_score)
 
         if ball:
-            rows = [r for r in rows if r.get('ball_in_court') == ball]
+            rows = [r for r in rows if r.get('pending_action_owner') == ball]
         if flag:
             rows = [r for r in rows if flag in (r.get('risk_flags') or [])]
         if action:
@@ -538,7 +539,7 @@ def _accuracy_metrics(ctx, days: int) -> Dict[str, Any]:
            AND NOT EXISTS (
                 SELECT 1 FROM alert_log a
                  WHERE a.incident_number = s.incident_number
-                   AND a.alert_type IN ('SLA_JEOPARDY','SLA_BREACHED')
+                   AND a.alert_type IN ('SLA_AT_RISK','SLA_BREACHED')
                    AND a.fired_at < s.computed_at)
     """, (since,)) or {}
 

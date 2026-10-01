@@ -61,12 +61,12 @@ comments on a ticket.
 | Signal | Why it matters |
 |---|---|
 | `idle_days` | Time since the last **meaningful agent action**. Excludes system accounts, `*.rest` integration users, SLA recalculations and the caller's own updates — otherwise the number is noise. |
-| **`ball_in_court`** | AGENT / CALLER / VENDOR / CHANGE / PROBLEM / APPROVAL. Turns "40 aged tickets" into "9 that are actually ours". |
+| **`pending_action_owner`** | SERVICE_DESK / CALLER / VENDOR / CHANGE / PROBLEM / APPROVAL. Reduces "40 aged incidents" to "9 requiring Service Desk action". |
 | **`caller_replied_unanswered`** | Caller responded, agent hasn't. Silent MTTR killer, and it overrides an "awaiting caller" hold reason. |
 | **`dependency_resolved`** | On hold for a CHG/PRB that has **already closed**. Invisible in a manual review; often the oldest tickets on the board. |
-| `followup_count` / `auto_close_candidate` | Documented chases with no reply → pre-drafted closure. |
+| `followup_count` / `auto_close_candidate` | Documented follow-ups with no response, leading to a pre-drafted closure. |
 | `sla_*` | Breach state, % consumed, projected breach time. |
-| `p90_overrun` | Slow **for its own category**, so long-by-nature request types aren't permanently red. |
+| `duration_overrun` | Slow **relative to its own category**, so request types that are long by nature are not permanently flagged. |
 | `kb_available` / `kb_attached` | A KB exists and wasn't attached — a provable coaching point. |
 
 ### The attention score
@@ -76,15 +76,15 @@ Weighted 0–100 composite, weights editable at `/settings/weights` and stored i
 defaults rather than producing a distorted ranking. Every point is attributable —
 the ticket page shows the per-component breakdown.
 
-| Component | Default |
-|---|---|
-| SLA jeopardy | 25 |
-| Stagnation | 25 |
-| Blocked but stale | 15 |
-| Age beyond threshold | 10 |
-| Priority | 10 |
-| p90 overrun | 10 |
-| Reassignment churn | 5 |
+| Component | Key | Default |
+|---|---|---|
+| SLA risk | `sla_risk` | 25 |
+| Inactivity duration | `inactivity_duration` | 25 |
+| Unactioned delay | `unactioned_delay` | 15 |
+| Ticket age | `ticket_age` | 10 |
+| Business priority | `business_priority` | 10 |
+| Duration overrun | `duration_overrun` | 10 |
+| Reassignment activity | `reassignment_activity` | 5 |
 
 ### The recommendation
 
@@ -132,7 +132,7 @@ python run.py doctor                                        # check every depend
 python run.py adduser --username you --role ADMIN --email you@corp
 python run.py backfill --days 180                           # build the evidence index (once, slow)
 python run.py sync --full && python run.py signals          # first pass
-python run.py preview -o /tmp/digest.html                   # eyeball the email
+python run.py preview -o /tmp/digest.html                   # review the email output
 
 sudo cp ops/aged-ticket-advisor.service /etc/systemd/system/
 sudo systemctl daemon-reload && sudo systemctl enable --now aged-ticket-advisor

@@ -97,12 +97,14 @@
     },
 
     "thresholds": {
+        "_comment": "The superseded names stagnation_days, critical_stagnation_days, sla_jeopardy_pct, auto_close_followups and auto_close_silence_days are still accepted, and a warning is logged naming the replacement. They will be removed in a future release.",
+
         "aged_after_days": 5,
-        "stagnation_days": 2,
-        "critical_stagnation_days": 4,
-        "sla_jeopardy_pct": 75,
-        "auto_close_followups": 3,
-        "auto_close_silence_days": 5,
+        "inactivity_days": 2,
+        "prolonged_inactivity_days": 4,
+        "sla_risk_pct": 75,
+        "closure_followup_count": 3,
+        "closure_silence_days": 5,
         "digest_max_tickets_per_agent": 25
     },
 

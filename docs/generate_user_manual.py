@@ -64,7 +64,7 @@ g.table(['', ''], [
 
 d.add_paragraph()
 g.callout('info', 'New here? Read three things.',
-          'Section 1 (what this is and is not), Section 2.2 (the "blocked by" idea — the one '
+          'Section 1 (what this is and is not), Section 2.2 (the pending action owner — the one '
           'concept that makes everything else make sense), and then either Section 4 if you '
           'are an agent or Section 5 if you are a lead. Twenty minutes total. Everything else '
           'is reference you can come back to.')
@@ -197,22 +197,26 @@ g.table(['Counts as activity', 'Does NOT count'], [
     ['A work note or comment from an agent', 'An automatic system update'],
     ['Changing the state, priority or hold reason', 'An SLA timer recalculating'],
     ['Assigning or reassigning the ticket', 'An integration account touching the record'],
-    ['Attaching a knowledge article', 'The caller adding a comment (that is their activity, '
-                                      'not ours — and it usually means we now owe a reply)'],
+    ['Attaching a knowledge article', 'The caller adding a comment (that is caller activity, '
+                                      'not Service Desk activity — and it usually means a '
+                                      'response is now owed)'],
 ], widths=[8.2, 8.2])
 
-g.h2('2.2 Blocked by — the important one')
-g.p('Every aged ticket gets a "Blocked by" value. This is the tool answering the question '
-    'leads actually care about: is this one ours to move, or are we legitimately waiting?')
+g.h2('2.2 Pending action owner — the key field')
+g.p('Every aged incident is assigned a Pending Action Owner. This answers the question '
+    'that matters most to a lead: is this incident awaiting Service Desk action, or is it '
+    'legitimately awaiting another party?')
 
-g.table(['Blocked by', 'What it means', 'Is it ours?'], [
-    ['Us', 'Nothing is stopping us. We owe the next action', 'Yes — act'],
-    ['Caller', 'We are waiting on information or confirmation from the caller', 'No — but see below'],
-    ['Vendor', 'A third party is holding it up', 'No — but chase if it has been a while'],
-    ['Change', 'Waiting on a change request', 'No'],
-    ['Problem', 'Waiting on a problem record', 'No'],
-    ['Approval', 'Waiting on someone to approve something', 'No'],
-], widths=[2.6, 9.4, 4.4])
+g.table(['Pending action owner', 'What it means', 'Service Desk action required?'], [
+    ['Service Desk', 'No external party is blocking the incident. The next action is owed '
+                     'by the Service Desk', 'Yes — act'],
+    ['Caller', 'Awaiting information or confirmation from the caller', 'No — but see below'],
+    ['Vendor', 'A third party is responsible for the delay',
+     'No — but escalate if the target has been exceeded'],
+    ['Change', 'Awaiting a change request', 'No'],
+    ['Problem', 'Awaiting a problem record', 'No'],
+    ['Approval', 'Awaiting an approval decision', 'No'],
+], widths=[2.9, 9.1, 4.4])
 
 g.callout('good', 'Why this saves the most time.',
           'A list of forty aged tickets is daunting. "Nine of these are ours and thirty-one '
@@ -253,16 +257,16 @@ g.table(['Ingredient', 'Weight', 'Plain meaning'], [
     ['Stagnation', '25', 'How long since anybody touched it'],
     ['Blocked but stale', '15', 'Caller waiting on a reply, blocker already cleared, or never '
                                 'actioned at all'],
-    ['Age', '10', 'How far past the 5-day threshold. Deliberately a small ingredient — age on '
-                  'its own means very little'],
-    ['Priority', '10', 'P1 outranks P4'],
-    ['Past expected time', '10', 'Slow compared with other tickets of the same type, not slow '
-                                 'in the abstract'],
-    ['Reassignment churn', '5', 'Bounced between queues, or reopened'],
+    ['Ticket age', '10', 'How far beyond the five-day threshold. Deliberately a minor '
+                         'component — age alone carries little meaning'],
+    ['Business priority', '10', 'P1 outranks P4'],
+    ['Duration overrun', '10', 'Slow relative to comparable incidents of the same type, '
+                               'not slow in the abstract'],
+    ['Reassignment activity', '5', 'Moved between queues, or reopened'],
 ], widths=[3.4, 1.6, 11.4])
 
-g.callout('info', 'Slow "for its own type".',
-          'The tool learns how long tickets in each category normally take by looking at ones '
+g.callout('info', 'Assessed relative to comparable incidents.',
+          'The tool establishes how long incidents in each category normally take by examining '
           'you have already resolved. A printer request that usually takes two days is flagged '
           'at four; a laptop build that normally takes ten days is not. This stops slow-by-'
           'nature work sitting permanently red.')
@@ -277,17 +281,17 @@ g.table(['Flag', 'What it means', 'Typical response'], [
      'Act now while it is still avoidable'],
     ['No action 4+ days', 'Nobody on our side has touched it for four days or more',
      'Either progress it or record why it is waiting'],
-    ['No recent action', 'Untouched for two days or more',
-     'A nudge, usually'],
-    ['Caller awaiting reply', 'The caller responded and has had no answer since',
-     'Reply. This is the most avoidable kind of delay there is'],
-    ['Blocker already closed', 'The change or problem it was waiting for has closed',
-     'Take it off hold and carry on'],
+    ['No recent activity', 'No Service Desk action for two days or more',
+     'Review and progress'],
+    ['Caller awaiting response', 'The caller has responded and received no reply since',
+     'Respond. This is the most avoidable category of delay'],
+    ['Dependency already closed', 'The change or problem it was awaiting has closed',
+     'Remove the hold and progress the incident'],
     ['Closure candidate', 'Follow-ups documented, caller silent since',
-     'Consider closing, per your local policy'],
-    ['Past expected time', 'Slower than tickets of the same type usually take',
-     'Worth understanding why'],
-    ['KB not attached', 'A knowledge article covers this and was not linked',
+     'Consider closure in line with local policy'],
+    ['Expected duration exceeded', 'Slower than comparable incidents of the same type',
+     'Establish the reason'],
+    ['Knowledge article not linked', 'A knowledge article covers this incident and was not linked',
      'Attach it — helps the next person and the caller'],
     ['Never actioned', 'No agent has touched it since it was raised',
      'Pick it up, or get it assigned properly'],
@@ -438,14 +442,14 @@ g.table(['If it says', 'Do this'], [
     ['Reassign',
      'Check the suggested group makes sense. The tool can only suggest groups that really '
      'exist, but it can still pick the wrong one. Put the reason in a work note'],
-    ['Resolve now',
-     'Read the similar incident it cites. If that fix applies, apply it, and attach the KB '
-     'article while you are there'],
-    ['Waiting on dependency',
-     'Nothing to do. Check the dependency reference in the sidebar is still open — if it has '
-     'closed, the flag will already have changed to "Blocker already closed"'],
-    ['Close (no response)',
-     'Follow your local closure policy. The tool has checked that the follow-ups are '
+    ['Resolve',
+     'Review the comparable incident cited. If that resolution applies, apply it, and link '
+     'the knowledge article at the same time'],
+    ['Awaiting dependency',
+     'No action required. Confirm the dependency reference in the sidebar is still open — '
+     'if it has closed, the flag will already have changed to "Dependency already closed"'],
+    ['Close - no caller response',
+     'Follow local closure policy. The tool has verified that the follow-ups are '
      'documented; it is not authorising the closure'],
     ['Escalate', 'Flag it to your lead with what you have tried'],
     ['On track', 'Nothing'],
@@ -500,13 +504,14 @@ g.callout('good', 'The point is that you stop reading tickets that are fine.',
 
 g.h2('5.2 Your digest, explained')
 g.table(['Block', 'What it is for'], [
-    ['Eight summary tiles', 'The shape of the backlog at a glance. "Waiting on us" is the one '
-                            'that matters — it is your real workload'],
+    ['Eight summary tiles', 'The composition of the backlog at a glance. "Awaiting Service '
+                            'Desk" is the figure that matters — it represents the actual '
+                            'workload'],
     ['Since yesterday', 'Newly aged and newly worse. If you are short of time, read only this'],
     ['Ranked list', 'Up to 25 tickets, worst first, each with the suggestion and why it ranks '
                     'where it does'],
-    ['Closure candidates', 'Follow-ups exhausted and caller silent. Handle as a batch rather '
-                           'than one at a time'],
+    ['Closure candidates', 'Follow-ups exhausted and caller silent. Process as a batch '
+                           'rather than individually'],
     ['By agent', 'Who is holding what, worst first, with their audit compliance average if '
                  'that link is enabled'],
 ], widths=[3.6, 12.8])
@@ -514,12 +519,13 @@ g.table(['Block', 'What it is for'], [
 g.h2('5.3 The board')
 g.p('Everything in the digest, live and filterable. The filters that get the most use:')
 g.table(['Filter', 'Use it to answer'], [
-    ['Blocked by = Us', '"What is genuinely ours this morning?"'],
-    ['Risk flag = Caller awaiting reply', '"Who are we leaving hanging?"'],
-    ['Risk flag = Blocker already closed', '"What is stuck for no reason at all?"'],
-    ['Suggested step = Close (no response)', '"What can we clear out?"'],
+    ['Pending action owner = Service Desk',
+     '"What requires Service Desk action this morning?"'],
+    ['Risk flag = Caller awaiting response', '"Which callers are awaiting a reply?"'],
+    ['Risk flag = Dependency already closed', '"What is held with no remaining reason?"'],
+    ['Suggested step = Close - no caller response', '"What can be cleared?"'],
     ['Agent = <name>', 'Prepare for a one-to-one'],
-    ['Min score = 70', '"Just show me the fires"'],
+    ['Min score = 70', '"Show only the most urgent incidents"'],
 ], widths=[5.6, 10.8])
 
 g.h2('5.4 Recording verdicts — the most important thing you do')
@@ -618,16 +624,17 @@ def scenario(n, title, board, tool_says, whats_going_on, do_this):
     g.rich([('What is going on:  ', {'b': True}), (whats_going_on, {})], after=4)
     g.rich([('What to do:  ', {'b': True}), (do_this, {})])
 
-scenario(1, 'The blocker cleared and nobody noticed',
+scenario(1, 'The dependency closed and was not noticed',
          """INC2831044   score 74  Critical
 Printer driver deployment failing on the Chicago floor
-Asha Rao · 19 days old · idle 11.4 days · Blocked by: Us
-Flags: Blocker already closed · No action 4+ days · Past expected time""",
-         '"Resolve now" — confidence 86%. The change this ticket was held for, CHG0044321, '
+Asha Rao · 19 days old · idle 11.4 days · Pending action owner: Service Desk
+Flags: Dependency already closed · Prolonged inactivity · Expected duration exceeded""",
+         '"Resolve" — confidence 86%. The change this incident was held for, CHG0044321, '
          'closed successfully eleven days ago.',
          'The ticket is still On Hold — Awaiting Change. Nobody is at fault: ServiceNow does '
-         'not tell you when a dependency closes, so the ticket simply sat there. The tool '
-         'noticed the change state and moved the ball back to us.',
+         'not report when a dependency closes, so the incident simply remained on hold. The '
+         'tool detected the change state and returned the pending action owner to the '
+         'Service Desk.',
          'Take it off hold, confirm the driver deployment worked, resolve it. This category of '
          'ticket is often the oldest thing on the board and the quickest to clear.')
 

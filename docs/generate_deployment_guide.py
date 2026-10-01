@@ -481,7 +481,7 @@ g.p('Each entry in sla.definitions also records the duration the definition had 
     'was written. Nothing is scored against it — live figures come from task_sla — but '
     'sla-map compares the two and marks any that have changed with an asterisk. This matters '
     'because retuning an SLA in ServiceNow is invisible from the advisor\'s side: '
-    'sla_pct_consumed moves for every ticket under that definition, sla_jeopardy fires at a '
+    'sla_pct_consumed moves for every incident under that definition, sla_risk contributes at a '
     'different point, and the board reorders with nothing in the logs to explain it.')
 g.code("""RESOLUTION  Priority 3 (Medium) Resolution   SLA    4 Days *     config:sys_id
 
@@ -624,6 +624,51 @@ g.code("""cd /genai/etc/scripts/aged_ticket_advisor
 mysql -u <admin> -p < db/schema.sql""")
 g.p('This creates the database if absent, eleven tables, the default attention weights and '
     'the v_current_board view. It is written to be safely re-runnable.')
+
+g.h3('6.2.1 Upgrading an existing database')
+g.p('Skip this on a new installation. If the database was created before the terminology was '
+    'formalised, apply the migration before restarting the service — the schema change and '
+    'the code change must land together.')
+g.code("""sudo systemctl stop aged-ticket-advisor
+
+mysql -u sd_advisor -p sd_advisor_db < db/migrations/001_formalise_naming.sql
+mysql -u sd_advisor -p sd_advisor_db < db/schema.sql     # recreates the view
+
+sudo systemctl start aged-ticket-advisor""",
+       caption='Stop the service first — the running process holds the former column names')
+g.table(['Change', 'Former name', 'Current name'], [
+    ['ticket_signal column', 'ball_in_court', 'pending_action_owner'],
+    ['ticket_signal column', 'p90_overrun', 'duration_overrun'],
+    ['Column value', 'AGENT', 'SERVICE_DESK'],
+    ['Score component', 'sla_jeopardy', 'sla_risk'],
+    ['Score component', 'stagnation', 'inactivity_duration'],
+    ['Score component', 'blocked_stale', 'unactioned_delay'],
+    ['Score component', 'churn', 'reassignment_activity'],
+    ['Score component', 'age / priority', 'ticket_age / business_priority'],
+    ['Risk flag', 'CRITICALLY_STALE / STALE', 'PROLONGED_INACTIVITY / NO_RECENT_ACTIVITY'],
+    ['Risk flag', 'SLA_JEOPARDY', 'SLA_AT_RISK'],
+    ['Risk flag', 'NEVER_TOUCHED', 'NO_ACTION_RECORDED'],
+    ['Risk flag', 'AUTO_CLOSE_CANDIDATE', 'CLOSURE_CANDIDATE'],
+    ['Risk flag', 'KB_NOT_ATTACHED', 'KB_ARTICLE_NOT_LINKED'],
+    ['Risk flag', 'PAST_EXPECTED_DURATION', 'EXPECTED_DURATION_EXCEEDED'],
+], widths=[2.4, 3.2, 4.8])
+g.p('The migration is idempotent and wrapped per statement, so a partially applied run can be '
+    'completed by running the file again. Weight values, feedback rows and signal history are '
+    'all preserved.')
+g.callout('warn', 'The first recommendation pass after this migration will call the model for '
+                  'the entire backlog.',
+          'The prompt now names pending_action_owner and the formalised risk flags, so every '
+          'stored input_hash was computed against a superseded prompt. The migration marks '
+          'those recommendations superseded deliberately, which forces one clean re-analysis '
+          'rather than presenting advice that cites terminology no longer in use. Expect a '
+          'single cost spike of roughly one model call per aged incident, then a return to '
+          'normal cache behaviour.')
+g.callout('info', 'Configuration keys were renamed too, but remain backward compatible.',
+          'thresholds.inactivity_days, critical_inactivity_days, sla_risk_pct, '
+          'closure_followup_count and closure_silence_days still work. Each logs a warning '
+          'naming its replacement, because silently reverting to a default would change '
+          'scoring with nothing to explain it. Update conf.json at your convenience — '
+          'Section 11 lists the current names.')
 
 g.h3('Objects created')
 g.table(['Object', 'Purpose'], [
@@ -1334,11 +1379,11 @@ g.code("""{
 
     "thresholds": {
         "aged_after_days": 5,
-        "stagnation_days": 2,
-        "critical_stagnation_days": 4,
-        "sla_jeopardy_pct": 75,
-        "auto_close_followups": 3,
-        "auto_close_silence_days": 5,
+        "inactivity_days": 2,
+        "prolonged_inactivity_days": 4,
+        "sla_risk_pct": 75,
+        "closure_followup_count": 3,
+        "closure_silence_days": 5,
         "digest_max_tickets_per_agent": 25
     },
 
@@ -1426,12 +1471,12 @@ g.h3('thresholds')
 g.table(['Key', 'Default', 'Effect if raised', 'Effect if lowered'], [
     ['aged_after_days', '5', 'Fewer tickets reviewed, risk of missing some',
      'More tickets, more noise and cost'],
-    ['stagnation_days', '2', 'Fewer "stale" flags', 'More stale flags'],
-    ['critical_stagnation_days', '4', 'Fewer critical flags; also flattens the stagnation score curve',
+    ['inactivity_days', '2', 'Fewer "stale" flags', 'More stale flags'],
+    ['prolonged_inactivity_days', '4', 'Fewer critical flags; also flattens the inactivity-duration score curve',
      'More critical flags'],
-    ['sla_jeopardy_pct', '75', 'Later SLA warnings', 'Earlier warnings, more alerts'],
-    ['auto_close_followups', '3', 'Stricter closure policy', 'Tickets proposed for closure sooner'],
-    ['auto_close_silence_days', '5', 'Longer wait before proposing closure', 'Faster closure proposals'],
+    ['sla_risk_pct', '75', 'Later SLA warnings', 'Earlier warnings, more alerts'],
+    ['closure_followup_count', '3', 'Stricter closure policy', 'Tickets proposed for closure sooner'],
+    ['closure_silence_days', '5', 'Longer wait before proposing closure', 'Faster closure proposals'],
     ['digest_max_tickets_per_agent', '25', 'Longer emails', 'Shorter emails; the remainder is on the board'],
 ], widths=[4.0, 1.6, 5.4, 5.4], code_cols=(0,))
 
@@ -1702,7 +1747,7 @@ g.code("""python run.py signals
 g.p('Now inspect the result — this is the first point at which you can sanity-check the '
     'output against what the leads believe is true:')
 g.code("""mysql -u sd_advisor -p sd_advisor_db -e "
-  SELECT incident_number, attention_score, ball_in_court,
+  SELECT incident_number, attention_score, pending_action_owner,
          ROUND(age_days) AS age, ROUND(idle_days,1) AS idle, risk_flags
     FROM v_current_board
    ORDER BY attention_score DESC
@@ -1710,7 +1755,7 @@ g.code("""mysql -u sd_advisor -p sd_advisor_db -e "
 """)
 
 g.callout('crit', 'Stop here and review with a lead.',
-          'Show them the top fifteen. Ask two questions: does the ball_in_court column match '
+          'Show them the top fifteen. Ask two questions: does the pending_action_owner column match '
           'reality, and are the idle_days plausible? If idle times look far too low, an '
           'automated account is missing from servicenow.system_accounts — return to Section 3.4. '
           'This is the single most common configuration error and everything downstream depends '
@@ -1922,9 +1967,9 @@ FLUSH PRIVILEGES;""")
 
 g.h2('18.2 Starter panel queries')
 g.code("""-- Aged backlog, split by who is actually blocking it
-SELECT ball_in_court AS metric, COUNT(*) AS value
+SELECT pending_action_owner AS metric, COUNT(*) AS value
   FROM v_current_board WHERE snoozed = 0
- GROUP BY ball_in_court;
+ GROUP BY pending_action_owner;
 
 -- Attention score distribution
 SELECT CASE WHEN attention_score >= 70 THEN 'Critical'
@@ -2016,7 +2061,7 @@ g.table(['Symptom', 'Likely cause', 'Adjustment'], [
     ['Many "not applicable" verdicts', 'Scope too wide', 'Narrow servicenow.assignment_groups'],
     ['Many low-confidence recommendations', 'Thin evidence base',
      'Extend the backfill window; check the KB index populated'],
-    ['ball_in_court frequently wrong', 'Hold reasons differ from the built-in mapping',
+    ['pending_action_owner frequently wrong', 'Hold reasons differ from the built-in mapping',
      'Edit HOLD_REASON_BLOCKER in pipeline/signals.py'],
 ], widths=[4.4, 5.0, 7.0])
 
@@ -2405,11 +2450,11 @@ g.table(['Key', 'Type', 'Default', 'Required'], [
     ['llm.min_confidence_to_surface', 'float', '0.55', 'No'],
     ['llm.min_similarity', 'float', '0.55', 'No'],
     ['thresholds.aged_after_days', 'int', '5', 'Yes'],
-    ['thresholds.stagnation_days', 'int', '2', 'No'],
-    ['thresholds.critical_stagnation_days', 'int', '4', 'No'],
-    ['thresholds.sla_jeopardy_pct', 'int', '75', 'No'],
-    ['thresholds.auto_close_followups', 'int', '3', 'No'],
-    ['thresholds.auto_close_silence_days', 'int', '5', 'No'],
+    ['thresholds.inactivity_days', 'int', '2', 'No'],
+    ['thresholds.prolonged_inactivity_days', 'int', '4', 'No'],
+    ['thresholds.sla_risk_pct', 'int', '75', 'No'],
+    ['thresholds.closure_followup_count', 'int', '3', 'No'],
+    ['thresholds.closure_silence_days', 'int', '5', 'No'],
     ['thresholds.digest_max_tickets_per_agent', 'int', '25', 'No'],
     ['scheduler.stream_interval_minutes', 'int', '10', 'No'],
     ['scheduler.recommendation_interval_minutes', 'int', '60', 'No'],
@@ -2538,7 +2583,7 @@ WEB
 KEY SQL
   SELECT * FROM sync_state\\G
   SELECT * FROM digest_run ORDER BY id DESC LIMIT 10;
-  SELECT incident_number, attention_score, ball_in_court
+  SELECT incident_number, attention_score, pending_action_owner
     FROM v_current_board ORDER BY attention_score DESC LIMIT 20;
 
 EMERGENCY

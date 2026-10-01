@@ -75,7 +75,7 @@ CREATE TABLE IF NOT EXISTS ticket_signal (
     last_agent_action_at        DATETIME     NULL,
     last_caller_activity_at     DATETIME     NULL,
 
-    ball_in_court               VARCHAR(20)  NOT NULL DEFAULT 'AGENT',
+    pending_action_owner        VARCHAR(20)  NOT NULL DEFAULT 'SERVICE_DESK',
     caller_replied_unanswered   TINYINT(1)   NOT NULL DEFAULT 0,
 
     dependency_ref              VARCHAR(50)  NULL,
@@ -92,7 +92,7 @@ CREATE TABLE IF NOT EXISTS ticket_signal (
     projected_breach_at         DATETIME     NULL,
 
     expected_resolution_hours   DECIMAL(10,2) NULL,
-    p90_overrun                 TINYINT(1)   NOT NULL DEFAULT 0,
+    duration_overrun            TINYINT(1)   NOT NULL DEFAULT 0,
 
     kb_available                TINYINT(1)   NOT NULL DEFAULT 0,
     kb_attached                 TINYINT(1)   NOT NULL DEFAULT 0,
@@ -163,7 +163,7 @@ CREATE TABLE IF NOT EXISTS recommendation_feedback (
 
 
 -- ---------------------------------------------------------------------------
--- Snooze / suppression. Stops the tool nagging about tickets already handled.
+-- Snooze / suppression. Prevents repeated reporting of incidents already addressed.
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS suppression (
     incident_number VARCHAR(50)  NOT NULL,
@@ -189,13 +189,13 @@ CREATE TABLE IF NOT EXISTS attention_weightage (
 ) ENGINE=InnoDB;
 
 INSERT INTO attention_weightage (component, weightage, description) VALUES
-    ('sla_jeopardy',   25, 'How close the resolution SLA is to breaching'),
-    ('stagnation',     25, 'Days since the last meaningful agent action'),
-    ('age',            10, 'Age beyond the aged-after threshold'),
-    ('priority',       10, 'Business priority and impact of the incident'),
-    ('churn',           5, 'Reassignment and reopen churn'),
-    ('blocked_stale',  15, 'Caller replied unanswered, or dependency already closed'),
-    ('p90_overrun',    10, 'Past the p90 resolution time for tickets of this pattern')
+    ('sla_risk',              25, 'Proximity of the resolution SLA to breach'),
+    ('inactivity_duration',   25, 'Elapsed time since the last substantive Service Desk action'),
+    ('unactioned_delay',      15, 'Caller response unanswered, or dependency already closed'),
+    ('ticket_age',            10, 'Age beyond the aged-after threshold'),
+    ('business_priority',     10, 'Business priority and impact of the incident'),
+    ('duration_overrun',      10, 'Beyond the 90th-percentile resolution time for comparable incidents'),
+    ('reassignment_activity',  5, 'Reassignment and reopen frequency')
 ON DUPLICATE KEY UPDATE description = VALUES(description);
 
 
@@ -303,14 +303,14 @@ SELECT
     s.computed_at,
     s.age_days,
     s.idle_days,
-    s.ball_in_court,
+    s.pending_action_owner,
     s.caller_replied_unanswered,
     s.dependency_resolved,
     s.auto_close_candidate,
     s.sla_breached,
     s.sla_pct_consumed,
     s.projected_breach_at,
-    s.p90_overrun,
+    s.duration_overrun,
     s.kb_available,
     s.kb_attached,
     s.attention_score,

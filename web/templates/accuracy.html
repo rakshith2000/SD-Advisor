@@ -33,7 +33,7 @@
 <div class="tiles">
   {{ tile('Action agreement',
           (agreement_pct ~ '%') if agreement_pct is not none else '-',
-          'target ' ~ target_agreement ~ '% &middot; lead did what we suggested',
+          'target ' ~ target_agreement ~ '% &middot; recommendation accepted by the lead',
           'good' if agreement_pct and agreement_pct >= target_agreement
           else 'serious' if agreement_pct else none) }}
 
@@ -139,7 +139,7 @@
       <dt>Action agreement</dt>
       <dd>
         Verdicts of <em>agreed</em> or <em>agreed with edits</em>, as a share of all verdicts.
-        This is the headline number: did we tell the lead the right thing to do?
+        This is the headline measure: whether the recommendation presented to the lead was the correct course of action.
         Target {{ target_agreement }}%.
       </dd>
 

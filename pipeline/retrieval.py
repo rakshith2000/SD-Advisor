@@ -293,7 +293,7 @@ class Retriever:
 
 
 # ---------------------------------------------------------------------------
-# Resolution-time baselines (feeds expected_resolution_hours / p90_overrun)
+# Resolution-time baselines (feeds expected_resolution_hours / duration_overrun)
 # ---------------------------------------------------------------------------
 
 def scope_key(category: str, subcategory: str) -> str:

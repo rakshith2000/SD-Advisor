@@ -15,18 +15,27 @@ from pydantic import BaseModel, Field, field_validator
 
 
 class RecommendedAction(str, Enum):
-    RESOLVE = 'RESOLVE'                      # enough evidence to resolve now
-    FOLLOW_UP_CALLER = 'FOLLOW_UP_CALLER'    # chase the caller for info/confirmation
-    CHASE_VENDOR = 'CHASE_VENDOR'            # third party is holding it up
-    REASSIGN = 'REASSIGN'                    # wrong queue
-    ESCALATE = 'ESCALATE'                    # needs lead or senior involvement
-    AWAIT_DEPENDENCY = 'AWAIT_DEPENDENCY'    # legitimately blocked by CHG/PRB
-    CLOSE_STALE = 'CLOSE_STALE'              # follow-ups exhausted, close it
-    NO_ACTION_NEEDED = 'NO_ACTION_NEEDED'    # progressing fine, leave it alone
+    """Values are retained verbatim for compatibility with stored rows and the
+    structured-output contract; only their presentation labels were
+    formalised. See delivery.digest.ACTION_LABELS."""
+
+    RESOLVE = 'RESOLVE'                      # sufficient evidence to resolve
+    FOLLOW_UP_CALLER = 'FOLLOW_UP_CALLER'    # request information from the caller
+    CHASE_VENDOR = 'CHASE_VENDOR'            # escalate to the third party
+    REASSIGN = 'REASSIGN'                    # incorrect assignment group
+    ESCALATE = 'ESCALATE'                    # requires lead or senior involvement
+    AWAIT_DEPENDENCY = 'AWAIT_DEPENDENCY'    # legitimately awaiting a change or problem
+    CLOSE_STALE = 'CLOSE_STALE'              # follow-ups exhausted, no caller response
+    NO_ACTION_NEEDED = 'NO_ACTION_NEEDED'    # progressing satisfactorily
 
 
-class Blocker(str, Enum):
-    AGENT = 'AGENT'
+class PendingActionOwner(str, Enum):
+    """The party responsible for the next action.
+
+    SERVICE_DESK denotes the team rather than a named individual, because an
+    unassigned incident is still Service Desk work.
+    """
+    SERVICE_DESK = 'SERVICE_DESK'
     CALLER = 'CALLER'
     VENDOR = 'VENDOR'
     CHANGE = 'CHANGE'
@@ -54,8 +63,8 @@ class Recommendation(BaseModel):
 
     recommended_action: RecommendedAction
     confidence: float = Field(ge=0.0, le=1.0)
-    blocker: Blocker
-    rationale: str = Field(description='2-3 sentences a lead can read at a glance')
+    pending_action_owner: PendingActionOwner
+    rationale: str = Field(description='Two to three sentences a lead can assess at a glance')
     evidence: List[Evidence] = Field(default_factory=list)
     suggested_target_group: Optional[str] = Field(
         default=None, description='Only when recommended_action is REASSIGN')
@@ -64,7 +73,7 @@ class Recommendation(BaseModel):
     draft_caller_message: str = Field(
         default='', description='Ready-to-send message to the caller, empty if not applicable')
     lead_feedback: str = Field(
-        default='', description='One coaching line the lead can give the agent')
+        default='', description='A single coaching sentence for the lead to relay to the agent')
     risk_flags: List[str] = Field(default_factory=list)
 
     @field_validator('rationale')
@@ -133,7 +142,7 @@ def sanitise(rec: Recommendation, valid_groups: List[str]) -> Recommendation:
             rec.suggested_target_group = None
             rec.recommended_action = RecommendedAction.ESCALATE
             rec.confidence = min(rec.confidence, 0.5)
-            rec.risk_flags = list(dict.fromkeys(rec.risk_flags + ['UNKNOWN_TARGET_GROUP']))
+            rec.risk_flags = list(dict.fromkeys(rec.risk_flags + ['UNVERIFIED_TARGET_GROUP']))
 
     if rec.recommended_action == RecommendedAction.NO_ACTION_NEEDED:
         rec.draft_caller_message = ''
