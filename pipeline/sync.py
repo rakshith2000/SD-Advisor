@@ -46,12 +46,18 @@ def _hash_content(ticket: Dict[str, Any]) -> str:
 
 
 def flatten_incident(raw: Dict[str, Any]) -> Dict[str, Any]:
-    """ServiceNow display-value payload -> watched_ticket row."""
+    """A sysparm_display_value=all payload -> a watched_ticket row.
+
+    Under `all` EVERY field arrives as {'display_value': ..., 'value': ...},
+    including plain strings such as number and short_description. Reading one
+    straight out of the payload yields a dict, not a string, so every field
+    goes through display_value() or utc_ts() without exception.
+    """
     return {
-        'incident_number': (raw.get('number') or '').strip(),
-        'sys_id': (raw.get('sys_id') or '').strip(),
-        'short_description': (raw.get('short_description') or '').strip(),
-        'description': raw.get('description') or '',
+        'incident_number': display_value(raw.get('number')),
+        'sys_id': display_value(raw.get('sys_id')),
+        'short_description': display_value(raw.get('short_description')),
+        'description': display_value(raw.get('description')),
         'caller_name': display_value(raw.get('caller_id')),
         'caller_sys_id': reference_sys_id(raw.get('caller_id')),
         'assigned_to': display_value(raw.get('assigned_to')),
@@ -139,7 +145,7 @@ class TicketSync:
 
         merged: Dict[str, Dict[str, Any]] = {}
         for row in list(aged) + list(recent):
-            number = (row.get('number') or '').strip()
+            number = display_value(row.get('number'))
             if number:
                 merged[number] = row
 
@@ -191,7 +197,7 @@ class TicketSync:
         if not full:
             return 0
 
-        seen = {(r.get('number') or '').strip() for r in rows}
+        seen = {display_value(r.get('number')) for r in rows}
         tracked = self.db.retrieve(
             'watched_ticket', columns=['incident_number'],
             conditions=[{'col': 'active', 'op': 'eq', 'val': 1}])

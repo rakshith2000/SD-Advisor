@@ -1,7 +1,7 @@
 """Incident, history and related-record reads."""
 
 import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Sequence
 
 from core.logging_setup import get_logger
 from core.snow.base import (DISPLAY_AND_VALUE, ServiceNowClient,
@@ -201,6 +201,18 @@ class IncidentReader:
 
     # -- related records ---------------------------------------------------
 
+    @staticmethod
+    def _flatten_related(row: Dict[str, Any], fields: Sequence[str],
+                         timestamps: Sequence[str] = ()) -> Dict[str, Any]:
+        """Collapse a dependency record to plain strings.
+
+        Flattened here rather than at the point of use so pipeline.signals
+        stays free of ServiceNow payload shapes.
+        """
+        flat = {f: display_value(row.get(f)) for f in fields}
+        flat.update({f: utc_value(row.get(f)) for f in timestamps})
+        return flat
+
     def get_change_state(self, number: str) -> Optional[Dict[str, Any]]:
         rows = self.client.get('change_request', {
             'sysparm_query': f'number={number}',
@@ -208,7 +220,11 @@ class IncidentReader:
             'sysparm_display_value': DISPLAY_AND_VALUE,
             'sysparm_limit': 1,
         })
-        return rows[0] if rows else None
+        if not rows:
+            return None
+        return self._flatten_related(
+            rows[0], ('number', 'state', 'short_description', 'close_code', 'active'),
+            timestamps=('end_date',))
 
     def get_problem_state(self, number: str) -> Optional[Dict[str, Any]]:
         rows = self.client.get('problem', {
@@ -217,7 +233,10 @@ class IncidentReader:
             'sysparm_display_value': DISPLAY_AND_VALUE,
             'sysparm_limit': 1,
         })
-        return rows[0] if rows else None
+        if not rows:
+            return None
+        return self._flatten_related(
+            rows[0], ('number', 'state', 'short_description', 'resolution_code', 'active'))
 
     def get_attached_kb(self, sys_id: str) -> List[Dict[str, Any]]:
         return self.client.get('m2m_kb_task', {

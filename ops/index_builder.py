@@ -43,14 +43,14 @@ class IndexBuilder:
                      if opened and resolved and resolved > opened else None)
 
             records.append({
-                'number': (row.get('number') or '').strip(),
-                'short_description': (row.get('short_description') or '').strip(),
-                'description': row.get('description') or '',
+                'number': display_value(row.get('number')),
+                'short_description': display_value(row.get('short_description')),
+                'description': display_value(row.get('description')),
                 'category': display_value(row.get('category')),
                 'subcategory': display_value(row.get('subcategory')),
                 'ci': display_value(row.get('cmdb_ci')),
                 'close_code': display_value(row.get('close_code')),
-                'close_notes': (row.get('close_notes') or '').strip(),
+                'close_notes': display_value(row.get('close_notes')),
                 'assignment_group': display_value(row.get('assignment_group')),
                 'resolution_hours': hours,
             })
