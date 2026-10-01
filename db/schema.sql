@@ -71,6 +71,11 @@ CREATE TABLE IF NOT EXISTS ticket_signal (
 
     age_days                    DECIMAL(8,2) NOT NULL DEFAULT 0,
     idle_days                   DECIMAL(8,2) NOT NULL DEFAULT 0,
+    -- Exact whole minutes for display. age_days is kept because the score
+    -- works in days, but two decimal places cannot resolve finer than about
+    -- fifteen minutes, so it cannot drive a figure that names minutes.
+    age_minutes                 INT          NOT NULL DEFAULT 0,
+    idle_minutes                INT          NOT NULL DEFAULT 0,
     days_in_state               DECIMAL(8,2) NOT NULL DEFAULT 0,
     last_agent_action_at        DATETIME     NULL,
     last_caller_activity_at     DATETIME     NULL,
@@ -303,6 +308,8 @@ SELECT
     s.computed_at,
     s.age_days,
     s.idle_days,
+    s.age_minutes,
+    s.idle_minutes,
     s.pending_action_owner,
     s.caller_replied_unanswered,
     s.dependency_resolved,
@@ -321,7 +328,7 @@ SELECT
     r.rationale,
     r.suggested_target_group,
     r.lead_feedback,
-    (sup.incident_number IS NOT NULL AND sup.snoozed_until > NOW()) AS snoozed
+    (sup.incident_number IS NOT NULL AND sup.snoozed_until > UTC_TIMESTAMP()) AS snoozed
 FROM watched_ticket w
 JOIN ticket_signal s
       ON s.incident_number = w.incident_number

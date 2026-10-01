@@ -20,7 +20,8 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from core.context import get_context                        # noqa: E402
-from core.snow.base import js_date                          # noqa: E402
+from core.snow.base import query_ts                          # noqa: E402
+from core.timeutil import utc_now
 
 
 def main() -> int:
@@ -46,7 +47,7 @@ def main() -> int:
     print(f'{len(groups)} active group(s) matching {args.term!r}:')
     print()
 
-    cutoff = js_date(datetime.datetime.now() - datetime.timedelta(days=30))
+    cutoff = query_ts(utc_now() - datetime.timedelta(days=30))
 
     rows = []
     for group in groups:

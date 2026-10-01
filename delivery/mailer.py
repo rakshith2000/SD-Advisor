@@ -16,6 +16,7 @@ from email.utils import formataddr, make_msgid
 from typing import Any, Dict, List, Optional
 
 from core.logging_setup import get_logger
+from core.timeutil import utc_now
 
 log = get_logger('delivery.mailer')
 
@@ -120,7 +121,7 @@ class Mailer:
                 'recipient': ', '.join(recipients)[:200],
                 'ticket_count': ticket_count,
                 'new_count': new_count,
-                'sent_at': datetime.datetime.now(),
+                'sent_at': utc_now(),
                 'status': status,
                 'error': error or None,
             })

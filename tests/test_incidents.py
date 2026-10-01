@@ -114,14 +114,20 @@ class TestQueryShapes:
                              datetime.datetime(2026, 2, 1))
         assert f'stateIN{CLOSED_STATES}' in r.client.last_query
 
-    def test_resolved_probe_uses_an_explicit_window(self):
+    def test_resolved_probe_uses_an_explicit_utc_window(self):
         """Not RELATIVEGE: an unrecognised unit is dropped, and a probe that
-        matches everything would report health while the backfill finds none."""
+        matches everything would report health while the backfill finds none.
+
+        Not gs.dateGenerate either: that interprets the wall clock it is given
+        in the session user's timezone, which would shift a UTC boundary by
+        that user's offset.
+        """
         r = reader()
-        r.sample_resolved_within(30)
+        r.sample_resolved_within(30, now=datetime.datetime(2026, 10, 1, 9, 30, 0))
         query = r.client.last_query
         assert 'RELATIVE' not in query
-        assert 'resolved_at>=javascript:gs.dateGenerate' in query
+        assert 'javascript:' not in query
+        assert 'resolved_at>=2026-09-01 09:30:00' in query
 
     def test_resolved_probe_does_not_paginate(self):
         r = reader()

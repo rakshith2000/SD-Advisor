@@ -10,7 +10,8 @@ import datetime
 from typing import Any, Dict, List, Optional
 
 from core.logging_setup import get_logger
-from core.snow.base import display_value, parse_ts
+from core.snow.base import display_value, utc_ts
+from core.timeutil import utc_now
 from pipeline.retrieval import (INCIDENT, KB, incident_document, kb_document,
                                 refresh_resolution_stats, text_hash)
 
@@ -26,7 +27,7 @@ class IndexBuilder:
     # -- resolved incidents ------------------------------------------------
 
     def fetch_resolved(self, days: int = 180) -> List[Dict[str, Any]]:
-        end = datetime.datetime.now()
+        end = utc_now()
         start = end - datetime.timedelta(days=days)
 
         log.info('Fetching resolved incidents from %s to %s', start.date(), end.date())
@@ -34,10 +35,10 @@ class IndexBuilder:
 
         records = []
         for row in raw:
-            opened = parse_ts(row.get('opened_at')) or parse_ts(row.get('sys_created_on'))
+            opened = utc_ts(row.get('opened_at')) or utc_ts(row.get('sys_created_on'))
             # Migrated and bulk-closed records often carry no resolved_at even
             # though state says Resolved; closed_at is the next best stamp.
-            resolved = parse_ts(row.get('resolved_at')) or parse_ts(row.get('closed_at'))
+            resolved = utc_ts(row.get('resolved_at')) or utc_ts(row.get('closed_at'))
             hours = (round((resolved - opened).total_seconds() / 3600.0, 2)
                      if opened and resolved and resolved > opened else None)
 

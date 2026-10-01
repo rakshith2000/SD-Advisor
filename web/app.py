@@ -19,6 +19,7 @@ from fastapi.templating import Jinja2Templates
 
 from core.context import get_context
 from core.logging_setup import get_logger
+from core.timeutil import utc_now
 from delivery.digest import (ACTION_LABELS, FLAG_LABELS,
                              PENDING_ACTION_OWNER_LABELS, DigestBuilder)
 from delivery.dispatch import Dispatcher
@@ -88,7 +89,7 @@ def create_app(config_path: Optional[str] = None) -> FastAPI:
 
     def render(request: Request, template: str, **context) -> HTMLResponse:
         context.setdefault('user', auth.current_user(request))
-        context.setdefault('now', datetime.datetime.now())
+        context.setdefault('now', utc_now())
         return templates.TemplateResponse(request, template, context)
 
     # -----------------------------------------------------------------
@@ -236,7 +237,7 @@ def create_app(config_path: Optional[str] = None) -> FastAPI:
             'decision': decision,
             'actual_action': actual_action or None,
             'comment': comment or None,
-            'created_at': datetime.datetime.now(),
+            'created_at': utc_now(),
         })
 
         # Recording a decision implies the lead has dealt with it, so stop it
@@ -436,13 +437,13 @@ def _load_json(value: Any, fallback: Any) -> Any:
 
 
 def _snooze(ctx, number: str, hours: int, reason: str, username: str) -> None:
-    until = datetime.datetime.now() + datetime.timedelta(hours=max(1, min(int(hours), 720)))
+    until = utc_now() + datetime.timedelta(hours=max(1, min(int(hours), 720)))
     ctx.db.upsert('suppression', {
         'incident_number': number,
         'snoozed_until': until,
         'reason': (reason or '')[:255] or None,
         'created_by': username,
-        'created_at': datetime.datetime.now(),
+        'created_at': utc_now(),
     }, update_columns=['snoozed_until', 'reason', 'created_by', 'created_at'])
     log.info('%s snoozed %s until %s', username, number, until)
 
@@ -462,8 +463,8 @@ def _refresh_single(orchestrator: Orchestrator, ctx, number: str) -> None:
             return
         from pipeline.sync import flatten_incident
         record = flatten_incident(raw)
-        record['last_synced_at'] = datetime.datetime.now()
-        record['first_seen_at'] = datetime.datetime.now()
+        record['last_synced_at'] = utc_now()
+        record['first_seen_at'] = utc_now()
         ctx.db.upsert('watched_ticket', record,
                       update_columns=[c for c in record if c not in
                                       ('incident_number', 'first_seen_at')])
@@ -478,7 +479,7 @@ def _refresh_single(orchestrator: Orchestrator, ctx, number: str) -> None:
 
 def _accuracy_metrics(ctx, days: int) -> Dict[str, Any]:
     """The numbers that answer "is this working well enough to trust"."""
-    since = datetime.datetime.now() - datetime.timedelta(days=max(1, days))
+    since = utc_now() - datetime.timedelta(days=max(1, days))
 
     overall = ctx.db.query_one("""
         SELECT COUNT(*) AS total,

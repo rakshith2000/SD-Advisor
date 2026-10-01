@@ -21,7 +21,8 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from core.context import get_context                        # noqa: E402
-from core.snow.base import js_date                          # noqa: E402
+from core.snow.base import query_ts                         # noqa: E402
+from core.timeutil import utc_now                           # noqa: E402
 
 PAGE = 200
 
@@ -36,12 +37,14 @@ def main() -> int:
     client = ctx.snow
     groups = ctx.settings.assignment_groups
 
-    end = datetime.datetime.now()
+    end = utc_now()
     start = end - datetime.timedelta(days=args.days)
-    plain_start = start.strftime('%Y-%m-%d %H:%M:%S')
-    plain_end = end.strftime('%Y-%m-%d %H:%M:%S')
+    js_start = "javascript:gs.dateGenerate('{0}','{1}')".format(
+        start.strftime('%Y-%m-%d'), start.strftime('%H:%M:%S'))
+    js_end = "javascript:gs.dateGenerate('{0}','{1}')".format(
+        end.strftime('%Y-%m-%d'), end.strftime('%H:%M:%S'))
 
-    print(f'Window     : {start:%Y-%m-%d %H:%M} -> {end:%Y-%m-%d %H:%M}')
+    print(f'Window(UTC): {start:%Y-%m-%d %H:%M} -> {end:%Y-%m-%d %H:%M}')
     print(f'Groups     : {groups or "(none configured - no group filter)"}')
     print(f'Instance   : {client.base_url}')
     print()
@@ -90,14 +93,15 @@ def main() -> int:
 
     print()
     print('--- the date clause on its own --------------------------------------')
-    probe('resolved_at>= javascript:gs.dateGenerate',
-          f'stateIN6,7^resolved_at>={js_date(start)}')
-    probe('resolved_at>= plain literal',
-          f'stateIN6,7^resolved_at>={plain_start}')
-    probe('resolved_atBETWEEN js (PRODUCTION FORM)',
-          f'stateIN6,7^resolved_atBETWEEN{js_date(start)}@{js_date(end)}')
-    probe('resolved_atBETWEEN plain literals',
-          f'stateIN6,7^resolved_atBETWEEN{plain_start}@{plain_end}')
+    probe('resolved_at>= UTC literal (PRODUCTION FORM)',
+          f'stateIN6,7^resolved_at>={query_ts(start)}')
+    probe('resolved_atBETWEEN UTC literals',
+          f'stateIN6,7^resolved_atBETWEEN{query_ts(start)}@{query_ts(end)}')
+    # The superseded form, kept for comparison. gs.dateGenerate interprets the
+    # wall clock in the session user's timezone, so any divergence from the
+    # literal above is that user's offset from UTC.
+    probe('[superseded] BETWEEN gs.dateGenerate',
+          f'stateIN6,7^resolved_atBETWEEN{js_start}@{js_end}')
     # Control, not a candidate. An unparseable condition is DROPPED by
     # ServiceNow rather than rejected, so a clause the instance does not
     # understand matches everything. If either of these lands far above the
@@ -110,7 +114,7 @@ def main() -> int:
     print()
     print('--- the exact production query --------------------------------------')
     probe('full get_closed_between()',
-          f'stateIN6,7^resolved_atBETWEEN{js_date(start)}@{js_date(end)}{group_clause}')
+          f'stateIN6,7^resolved_atBETWEEN{query_ts(start)}@{query_ts(end)}{group_clause}')
 
     print()
     print('--- what a closed ticket actually looks like ------------------------')

@@ -185,12 +185,28 @@ g.h1('2. The ideas behind the numbers')
 g.p('There are four ideas. Once they make sense, everything on the screen makes sense.')
 
 g.h2('2.1 Age and idle time are different things')
-g.p('Age is how long the ticket has existed. Idle time is how long since anybody on our side '
-    'actually did something to it.')
-g.callout('info', 'Idle time is the one that matters.',
-          'A ticket can be three weeks old and perfectly healthy — a hardware order with a '
-          'known delivery date, say. A ticket that is eight days old with nobody having '
-          'touched it for six of them is a different situation entirely.')
+g.p('Age is how long the incident has existed. Idle time is how long it has been since '
+    'anyone in the Service Desk acted on it.')
+g.callout('info', 'Idle time is the figure that matters.',
+          'An incident can be three weeks old and entirely healthy — a hardware order with '
+          'a confirmed delivery date, for example. An incident eight days old with no '
+          'Service Desk action for six of them is a different situation entirely.')
+
+g.h3('How these are displayed')
+g.p('Both are shown as an exact elapsed duration rather than a rounded number of days, so a '
+    'recently worked incident is distinguishable from one last touched this morning. Units '
+    'that are zero are omitted.')
+g.table(['Displayed as', 'Means'], [
+    ['10 Days 12 Hrs 30 Mins', 'Ten and a half days, to the minute'],
+    ['23 Hrs 45 Mins', 'Under a day — would previously have read "1.0d"'],
+    ['30 Mins', 'Half an hour — would previously have read "0.0d"'],
+    ['10 Days', 'Exactly ten days; the zero hours and minutes are not padded'],
+    ['0 Mins', 'Acted on within the last minute'],
+], widths=[4.4, 11.6])
+g.callout('info', 'All times are recorded in UTC.',
+          'Durations are elapsed time, so they read the same wherever you are. Absolute '
+          'timestamps shown alongside them are UTC, which may differ from the time '
+          'ServiceNow displays to you if your own profile is set to a local timezone.')
 
 g.p('What counts as "somebody actually did something":')
 g.table(['Counts as activity', 'Does NOT count'], [

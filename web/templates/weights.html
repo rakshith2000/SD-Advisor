@@ -74,27 +74,29 @@
   <div class="card-head"><h2>Guidance</h2></div>
   <div class="card-body">
     <dl class="kv" style="grid-template-columns:170px 1fr;">
-      <dt>Stagnation</dt>
+      <dt>Inactivity duration</dt>
       <dd>
-        Raise this if leads care most about tickets nobody is touching. It is the
-        component most directly tied to the manual review this replaces.
+        Increase this where leads are most concerned with incidents nobody is
+        progressing. It is the component most directly equivalent to the manual
+        review this service replaces.
       </dd>
-      <dt>SLA jeopardy</dt>
+      <dt>SLA risk</dt>
       <dd>
-        Raise this if contractual breach is the dominant concern. Note that a
-        breached ticket already scores the maximum on this component, so pushing
-        it too high makes every breached ticket rank identically.
+        Increase this where contractual breach is the dominant concern. Note
+        that a breached incident already scores the maximum on this component,
+        so an excessive weight causes every breached incident to rank
+        identically.
       </dd>
-      <dt>Blocked stale</dt>
+      <dt>Unactioned delay</dt>
       <dd>
-        Covers caller-replied-unanswered, cleared dependencies and never-touched
-        tickets. These are the ones a manual review misses most often, so it is
-        worth keeping meaningful weight here.
+        Covers unanswered caller responses, cleared dependencies and incidents
+        with no recorded action. These are the cases a manual review misses most
+        frequently, so a meaningful weight is recommended.
       </dd>
-      <dt>Age</dt>
+      <dt>Ticket age</dt>
       <dd>
-        Deliberately modest by default. Age alone is a weak signal &mdash; a
-        legitimately blocked ticket gets old without anyone being at fault.
+        Deliberately modest by default. Age alone is a weak indicator &mdash; a
+        legitimately blocked incident ages without any party being at fault.
       </dd>
     </dl>
   </div>

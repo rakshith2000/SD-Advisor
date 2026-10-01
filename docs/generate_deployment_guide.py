@@ -632,6 +632,7 @@ g.p('Skip this on a new installation. If the database was created before the ter
 g.code("""sudo systemctl stop aged-ticket-advisor
 
 mysql -u sd_advisor -p sd_advisor_db < db/migrations/001_formalise_naming.sql
+mysql -u sd_advisor -p sd_advisor_db < db/migrations/002_utc_and_minutes.sql
 mysql -u sd_advisor -p sd_advisor_db < db/schema.sql     # recreates the view
 
 sudo systemctl start aged-ticket-advisor""",
@@ -1111,12 +1112,33 @@ g.table(['Response', 'Meaning', 'Fix'], [
 ], widths=[2.4, 6.6, 7.4], code_cols=(0,))
 
 g.h2('8.4 Timezone')
-g.p('ServiceNow returns history timestamps in UTC but attachment timestamps in the '
-    'integration user\'s display timezone. The advisor detects the offset automatically on '
-    'first use by comparing the same field with and without display values, and caches it. '
-    'Setting the integration user to UTC makes the offset zero and removes a class of '
-    'subtle date errors entirely — recommended but not required.')
-
+g.p('ServiceNow returns every datetime twice. The value field is UTC. The display_value '
+    'field is the same instant rendered in the integration user\'s timezone and in the '
+    'integration user\'s date format. Both are correct; they are not interchangeable.')
+g.p('Every read in this project uses sysparm_display_value=all and takes the value side for '
+    'each datetime, the display_value side for references and choices. Elapsed time is then '
+    'measured against utc_now(). Neither side of that subtraction depends on a ServiceNow '
+    'user profile, so no administrator action can silently skew an age.')
+g.table(['Field kind', 'Side read', 'Why'], [
+    ['opened_at, sys_updated_on, resolved_at, update_time', 'value',
+     'UTC, directly comparable with utc_now()'],
+    ['state, priority, assignment_group, category', 'display_value',
+     'The human-readable label a lead expects'],
+    ['business_time_left (task_sla)', 'value',
+     'An epoch offset; display_value is prose such as "2 Days 22 Hours"'],
+], widths=[7.0, 2.2, 6.2])
+g.callout('info', 'Setting the integration user to UTC is still worth doing.',
+          'It is no longer required for correctness, but it makes value and display_value '
+          'identical, so anything read out of ServiceNow by hand agrees with what the '
+          'advisor stored. Confirm the current position with ops/probe_timezone.py, which '
+          'prints the server clock, the user profile and the measured offset side by side.')
+g.code("""python ops/probe_timezone.py""",
+       caption='Reports the skew as a number rather than a theory')
+g.callout('warn', 'MySQL NOW() is not UTC.',
+          'NOW() returns the MySQL session timezone, so every query in this project that '
+          'compares against a stored timestamp uses UTC_TIMESTAMP() instead. Apply the same '
+          'rule to any reporting query you write against these tables, or a snooze or '
+          'retention comparison will be wrong by the database server offset.')
 g.h2('8.5 Rate limiting')
 g.p('Confirm with your ServiceNow administrator whether an inbound REST rate limit applies '
     'to integration users. Steady-state load is modest, but the one-off backfill in Section '

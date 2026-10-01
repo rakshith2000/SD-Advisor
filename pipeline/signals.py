@@ -9,13 +9,19 @@ The key judgement encoded here is what counts as a *meaningful agent action*.
 Misjudging it is what causes tools of this kind to report incidents that are
 in fact being progressed, so system accounts, SLA recalculations and the
 caller's own updates are all excluded from the inactivity clock.
+
+Every timestamp reaching this module is naive UTC, and `now` defaults to
+utc_now(). Both sides of every subtraction are therefore on the same clock -
+see core.timeutil for why that matters.
 """
 
 import datetime
 import re
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
-TS_FORMAT = '%Y-%m-%d %H:%M:%S'
+from core.timeutil import TS_FORMAT  # noqa: F401  (re-exported for callers)
+from core.timeutil import days_between as _days_between
+from core.timeutil import minutes_between, parse_ts, utc_now
 
 # --- Vocabulary -----------------------------------------------------------
 # Two related but deliberately separate sets of terms:
@@ -90,22 +96,6 @@ _FOLLOWUP_HINT = re.compile(
 # ---------------------------------------------------------------------------
 # helpers
 # ---------------------------------------------------------------------------
-
-def parse_ts(value: Any) -> Optional[datetime.datetime]:
-    if not value or not str(value).strip():
-        return None
-    try:
-        return datetime.datetime.strptime(str(value).strip(), TS_FORMAT)
-    except ValueError:
-        return None
-
-
-def _days_between(later: Optional[datetime.datetime],
-                  earlier: Optional[datetime.datetime]) -> Optional[float]:
-    if later is None or earlier is None:
-        return None
-    return round(max(0.0, (later - earlier).total_seconds()) / 86400.0, 2)
-
 
 def classify_actor(user_name: str, caller_name: str,
                    system_accounts: Sequence[str]) -> str:
@@ -316,7 +306,7 @@ def extract_signals(ticket: Dict[str, Any], history: List[Dict[str, Any]],
     Returns a flat dict that maps directly onto ticket_signal columns, plus a
     '_timeline' key the prompt builder consumes.
     """
-    now = now or datetime.datetime.now()
+    now = now or utc_now()
     thresholds = thresholds or {}
     caller_name = ticket.get('caller_name') or ''
 
@@ -344,6 +334,12 @@ def extract_signals(ticket: Dict[str, Any], history: List[Dict[str, Any]],
     age_days = _days_between(now, opened_at) or 0.0
     idle_days = _days_between(now, idle_from) or 0.0
 
+    # Whole minutes as well as days. age_days is stored to two decimal places,
+    # which cannot resolve finer than about fifteen minutes, so it is unusable
+    # for a display that names minutes.
+    age_minutes = minutes_between(now, opened_at) or 0
+    idle_minutes = minutes_between(now, idle_from) or 0
+
     state_changes = [e for e in timeline if e['field'] == 'state']
     state_since = parse_ts(state_changes[-1]['when']) if state_changes else opened_at
     days_in_state = _days_between(now, state_since) or age_days
@@ -366,6 +362,8 @@ def extract_signals(ticket: Dict[str, Any], history: List[Dict[str, Any]],
     signals: Dict[str, Any] = {
         'age_days': age_days,
         'idle_days': idle_days,
+        'age_minutes': age_minutes,
+        'idle_minutes': idle_minutes,
         'days_in_state': days_in_state,
         'last_agent_action_at': agent_action_at,
         'last_caller_activity_at': caller_activity_at,

@@ -145,8 +145,8 @@
           <th class="num">Score</th>
           <th>Ticket</th>
           <th>Assigned to</th>
-          <th class="num">Age</th>
-          <th class="num">Idle</th>
+          <th>Age</th>
+          <th>Idle</th>
           <th>Blocked by</th>
           <th>Suggested next step</th>
         </tr>
@@ -180,8 +180,8 @@
             <div class="subtle">{{ row.assignment_group or '-' }}</div>
           </td>
 
-          <td class="num">{{ row.age_days_display }}d</td>
-          <td class="num">{{ row.idle_days_display }}d</td>
+          <td class="tnum">{{ row.age_display }}</td>
+          <td class="tnum">{{ row.idle_display }}</td>
 
           <td><strong>{{ row.pending_action_owner_label }}</strong></td>
 

@@ -20,26 +20,36 @@ from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
 from core.logging_setup import get_logger
+from core.timeutil import TS_FORMAT, parse_ts, utc_now   # noqa: F401  (re-exported)
 
 log = get_logger('core.snow')
 
-TS_FORMAT = '%Y-%m-%d %H:%M:%S'
+# Every read that carries a timestamp asks for this. Reference and choice
+# fields then arrive as {'display_value': ..., 'value': ...}: take
+# display_value for anything a human reads, and value for every datetime,
+# because value is UTC while display_value is the integration user's timezone
+# rendered in the integration user's date format.
+DISPLAY_AND_VALUE = 'all'
 
 
 class ServiceNowError(RuntimeError):
     pass
 
 
-def js_date(ts: datetime.datetime) -> str:
-    """Render a timestamp as a ServiceNow gs.dateGenerate() expression.
+def query_ts(ts: datetime.datetime) -> str:
+    """Render a UTC timestamp for use in an encoded query.
 
-    Using an explicit generated date rather than a relative helper such as
-    gs.daysAgoStart() keeps the window deterministic and independent of the
-    integration user's timezone profile.
+    A plain literal, not javascript:gs.dateGenerate(). gs.dateGenerate
+    interprets the wall clock it is given in the *session user's* timezone and
+    converts to UTC, so feeding it a UTC value shifts the window by that
+    user's offset. An encoded query compares against the stored UTC value
+    directly, which is what the caller already holds.
+
+    Note that an unparseable condition is dropped by ServiceNow rather than
+    rejected, so a malformed boundary widens the result set instead of
+    narrowing it. Verified against this instance with ops/probe_resolved.py.
     """
-    return "javascript:gs.dateGenerate('{0}','{1}')".format(
-        ts.strftime('%Y-%m-%d'), ts.strftime('%H:%M:%S')
-    )
+    return ts.strftime(TS_FORMAT)
 
 
 class ServiceNowClient:
@@ -79,7 +89,6 @@ class ServiceNowClient:
         self.session.mount('https://', adapter)
         self.session.mount('http://', adapter)
 
-        self._tz_offset_seconds: Optional[float] = None
         log.info('ServiceNow client ready (%s)', self.base_url)
 
     # -- core request ------------------------------------------------------
@@ -196,55 +205,39 @@ class ServiceNowClient:
 
     # -- helpers -----------------------------------------------------------
 
-    def timezone_offset_seconds(self) -> float:
-        """Offset between the integration user's displayed time and UTC.
-
-        Attachment timestamps come back in the user's display timezone while
-        history timestamps come back in UTC; without this correction the
-        "was an email attached around the time of this event" window silently
-        misses by several hours. Computed once and cached.
-        """
-        if self._tz_offset_seconds is not None:
-            return self._tz_offset_seconds
-
-        params = {
-            'sysparm_fields': 'sys_created_on',
-            'sysparm_query': f'user_name={self.username}',
-            'sysparm_limit': 1,
-        }
-        try:
-            utc_rows = self.get('sys_user', params)
-            display_rows = self.get('sys_user', dict(params, sysparm_display_value='true'))
-            utc = datetime.datetime.strptime(utc_rows[0]['sys_created_on'], TS_FORMAT)
-            local = datetime.datetime.strptime(display_rows[0]['sys_created_on'], TS_FORMAT)
-            self._tz_offset_seconds = (utc - local).total_seconds()
-        except Exception:
-            log.warning('Could not determine ServiceNow timezone offset; assuming UTC')
-            self._tz_offset_seconds = 0.0
-
-        return self._tz_offset_seconds
-
-
-def parse_ts(value: Any) -> Optional[datetime.datetime]:
-    """Lenient timestamp parse - ServiceNow returns '' for unset dates."""
-    if not value or not str(value).strip():
-        return None
-    text = str(value).strip()
-    for fmt in (TS_FORMAT, '%Y-%m-%d %H:%M', '%d-%m-%Y %H:%M:%S', '%m/%d/%Y %H:%M:%S'):
-        try:
-            return datetime.datetime.strptime(text, fmt)
-        except ValueError:
-            continue
-    return None
-
-
 def display_value(field: Any) -> str:
-    """Flatten a ServiceNow reference field to its display string."""
+    """The human-readable form of a field. Use for references and choices."""
     if field is None:
         return ''
     if isinstance(field, dict):
         return str(field.get('display_value', '') or '').strip()
     return str(field).strip()
+
+
+def utc_value(field: Any) -> str:
+    """The raw stored form of a field. Use for every datetime.
+
+    Under sysparm_display_value=all a datetime arrives as both an unambiguous
+    UTC string in `value` and a timezone-and-format-dependent string in
+    `display_value`. Only the former can be compared against utc_now()
+    without drifting.
+
+    Falls back to display_value if `value` is absent, so a response fetched
+    with display_value=true still yields something rather than nothing.
+    """
+    if field is None:
+        return ''
+    if isinstance(field, dict):
+        raw = field.get('value')
+        if raw in (None, ''):
+            raw = field.get('display_value')
+        return str(raw or '').strip()
+    return str(field).strip()
+
+
+def utc_ts(field: Any):
+    """Parse a datetime field straight to a naive UTC datetime."""
+    return parse_ts(utc_value(field))
 
 
 def reference_sys_id(field: Any) -> str:

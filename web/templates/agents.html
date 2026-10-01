@@ -58,7 +58,7 @@
               <strong class="tnum">{{ entry.max_score }}</strong>
             </div>
           </td>
-          <td class="num">{{ entry.avg_idle_days }}d</td>
+          <td class="tnum">{{ entry.avg_idle_display }}</td>
           <td class="num" style="{{ 'color:var(--status-critical);font-weight:600;' if entry.sla_breached }}">
             {{ entry.sla_breached }}
           </td>

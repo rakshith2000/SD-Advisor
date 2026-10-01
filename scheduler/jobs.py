@@ -21,6 +21,7 @@ from apscheduler.triggers.interval import IntervalTrigger
 from core.logging_setup import get_logger
 from delivery.dispatch import Dispatcher
 from pipeline.orchestrator import Orchestrator
+from core.timeutil import utc_now
 
 log = get_logger('scheduler')
 
@@ -37,7 +38,7 @@ class JobRunner:
 
     def stream_tick(self) -> Dict[str, Any]:
         """Delta sync, recompute signals, fire any new risk alerts."""
-        result: Dict[str, Any] = {'started_at': datetime.datetime.now()}
+        result: Dict[str, Any] = {'started_at': utc_now()}
         try:
             result['sync'] = self.ctx.sync.run(full=False)
             result['signals'] = self.orchestrator.refresh_signals()
@@ -108,17 +109,17 @@ class JobRunner:
         far the fastest-growing table here.
         """
         statements = {
-            'signals': 'DELETE FROM ticket_signal WHERE computed_at < DATE_SUB(NOW(), INTERVAL %s DAY)',
-            'alerts': 'DELETE FROM alert_log WHERE fired_at < DATE_SUB(NOW(), INTERVAL %s DAY)',
+            'signals': 'DELETE FROM ticket_signal WHERE computed_at < DATE_SUB(UTC_TIMESTAMP(), INTERVAL %s DAY)',
+            'alerts': 'DELETE FROM alert_log WHERE fired_at < DATE_SUB(UTC_TIMESTAMP(), INTERVAL %s DAY)',
             'recommendations': ('DELETE FROM recommendation WHERE superseded = 1 '
-                                ' AND created_at < DATE_SUB(NOW(), INTERVAL %s DAY)'),
+                                ' AND created_at < DATE_SUB(UTC_TIMESTAMP(), INTERVAL %s DAY)'),
         }
 
         pruned = {name: self.ctx.db.execute(sql, (retain_days,))
                   for name, sql in statements.items()}
 
         pruned['suppressions'] = self.ctx.db.execute(
-            'DELETE FROM suppression WHERE snoozed_until < DATE_SUB(NOW(), INTERVAL 30 DAY)')
+            'DELETE FROM suppression WHERE snoozed_until < DATE_SUB(UTC_TIMESTAMP(), INTERVAL 30 DAY)')
 
         log.info('Pruned old rows: %s', pruned)
         return pruned
@@ -136,7 +137,7 @@ def build_scheduler(context) -> BackgroundScheduler:
     stream_minutes = int(settings.get('scheduler.stream_interval_minutes', 10))
     scheduler.add_job(runner.stream_tick, IntervalTrigger(minutes=stream_minutes),
                       id='stream', name='Delta sync, signals and risk alerts',
-                      next_run_time=datetime.datetime.now() + datetime.timedelta(seconds=30))
+                      next_run_time=utc_now() + datetime.timedelta(seconds=30))
 
     recommend_minutes = int(settings.get('scheduler.recommendation_interval_minutes', 60))
     scheduler.add_job(runner.recommendation_pass, IntervalTrigger(minutes=recommend_minutes),

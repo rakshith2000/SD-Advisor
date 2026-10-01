@@ -17,6 +17,7 @@ from core.llm.schemas import (Recommendation, RecommendedAction,
                               recommendation_json_schema, sanitise)
 from core.logging_setup import get_logger
 from core.redaction import Redactor
+from core.timeutil import utc_now
 
 log = get_logger('pipeline.advisor')
 
@@ -137,7 +138,7 @@ class Advisor:
 
         record = {
             'incident_number': number,
-            'created_at': datetime.datetime.now(),
+            'created_at': utc_now(),
             'model': meta.get('model'),
             'prompt_version': PROMPT_VERSION,
             'input_hash': input_hash,
@@ -217,5 +218,5 @@ class Advisor:
             'evidence': json.dumps([]),
             'surfaced': 1,
             'model': 'rule-fallback',
-            'created_at': datetime.datetime.now(),
+            'created_at': utc_now(),
         }

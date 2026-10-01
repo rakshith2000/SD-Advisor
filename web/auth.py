@@ -27,6 +27,7 @@ from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 import bcrypt
 
 from core.logging_setup import get_logger
+from core.timeutil import utc_now
 
 log = get_logger('web.auth')
 
@@ -180,7 +181,7 @@ class UserStore:
         if not row or not verify_password(password, row['password_hash']):
             return None
 
-        self.db.update('advisor_user', {'last_login_at': datetime.datetime.now()},
+        self.db.update('advisor_user', {'last_login_at': utc_now()},
                        conditions=[{'col': 'id', 'op': 'eq', 'val': row['id']}])
         return row
 
@@ -195,7 +196,7 @@ class UserStore:
             'role': role,
             'assignment_groups': assignment_groups or None,
             'active': 1,
-            'created_at': datetime.datetime.now(),
+            'created_at': utc_now(),
         })
 
     def visible_groups(self, user: Dict[str, Any],

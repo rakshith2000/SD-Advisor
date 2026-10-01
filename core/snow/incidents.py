@@ -4,7 +4,9 @@ import datetime
 from typing import Any, Dict, List, Optional
 
 from core.logging_setup import get_logger
-from core.snow.base import ServiceNowClient, display_value, js_date
+from core.snow.base import (DISPLAY_AND_VALUE, ServiceNowClient,
+                            display_value, query_ts, utc_value)
+from core.timeutil import utc_now
 
 log = get_logger('core.snow.incidents')
 
@@ -63,7 +65,7 @@ class IncidentReader:
         rows = self.client.get('sys_user_group', {
             'sysparm_query': 'active=true^nameIN' + ','.join(self.assignment_groups),
             'sysparm_fields': 'name',
-            'sysparm_display_value': 'true',
+            'sysparm_display_value': DISPLAY_AND_VALUE,
             'sysparm_limit': len(self.assignment_groups) + 10,
         })
         found = {display_value(r.get('name')) for r in rows}
@@ -74,20 +76,20 @@ class IncidentReader:
     def get_aged_open_incidents(self, aged_after_days: int,
                                 now: Optional[datetime.datetime] = None) -> List[Dict[str, Any]]:
         """Open, in-scope incidents opened more than N days ago."""
-        now = now or datetime.datetime.now()
+        now = now or utc_now()
         cutoff = now - datetime.timedelta(days=aged_after_days)
 
         query = (
             f'active=true'
             f'^stateIN{OPEN_STATES}'
-            f'^opened_at<{js_date(cutoff)}'
+            f'^opened_at<{query_ts(cutoff)}'
             f'{self._group_clause()}'
         )
 
         return self.client.get_all('incident', {
             'sysparm_query': query,
             'sysparm_fields': INCIDENT_FIELDS,
-            'sysparm_display_value': 'true',
+            'sysparm_display_value': DISPLAY_AND_VALUE,
         })
 
     def get_changed_since(self, watermark: datetime.datetime) -> List[Dict[str, Any]]:
@@ -99,14 +101,14 @@ class IncidentReader:
         query = (
             f'active=true'
             f'^stateIN{OPEN_STATES}'
-            f'^sys_updated_on>{js_date(watermark)}'
+            f'^sys_updated_on>{query_ts(watermark)}'
             f'{self._group_clause()}'
         )
 
         return self.client.get_all('incident', {
             'sysparm_query': query,
             'sysparm_fields': INCIDENT_FIELDS,
-            'sysparm_display_value': 'true',
+            'sysparm_display_value': DISPLAY_AND_VALUE,
             'sysparm_query_order': 'sys_updated_on',
         })
 
@@ -114,7 +116,7 @@ class IncidentReader:
         rows = self.client.get('incident', {
             'sysparm_query': f'number={number}',
             'sysparm_fields': INCIDENT_FIELDS,
-            'sysparm_display_value': 'true',
+            'sysparm_display_value': DISPLAY_AND_VALUE,
             'sysparm_limit': 1,
         })
         return rows[0] if rows else None
@@ -124,13 +126,13 @@ class IncidentReader:
         """Resolved incidents, used to build the similar-incident index."""
         query = (
             f'stateIN{CLOSED_STATES}'
-            f'^resolved_atBETWEEN{js_date(start)}@{js_date(end)}'
+            f'^resolved_atBETWEEN{query_ts(start)}@{query_ts(end)}'
             f'{self._group_clause()}'
         )
         return self.client.get_all('incident', {
             'sysparm_query': query,
             'sysparm_fields': INCIDENT_FIELDS,
-            'sysparm_display_value': 'true',
+            'sysparm_display_value': DISPLAY_AND_VALUE,
         })
 
     def sample_resolved_within(self, days: int, limit: int = 1,
@@ -147,11 +149,11 @@ class IncidentReader:
         ServiceNow, not rejected, so a probe built on syntax the instance does
         not recognise would match every record and always pass.
         """
-        now = now or datetime.datetime.now()
+        now = now or utc_now()
         cutoff = now - datetime.timedelta(days=days)
         return self.client.get('incident', {
             'sysparm_query': (f'stateIN{CLOSED_STATES}'
-                              f'^resolved_at>={js_date(cutoff)}'
+                              f'^resolved_at>={query_ts(cutoff)}'
                               f'{self._group_clause()}'),
             'sysparm_fields': 'number',
             'sysparm_limit': limit,
@@ -168,7 +170,7 @@ class IncidentReader:
         """
         rows = self.client.get_all('sys_history_line', {
             'sysparm_query': f'set.id={sys_id}',
-            'sysparm_display_value': 'true',
+            'sysparm_display_value': DISPLAY_AND_VALUE,
         })
 
         history: List[Dict[str, Any]] = []
@@ -176,11 +178,14 @@ class IncidentReader:
 
         for event in rows:
             entry = {
-                'user_name': (event.get('user_name') or '').strip(),
-                'update_time': (event.get('update_time') or '').strip(),
-                'field': (event.get('field') or '').strip(),
-                'new': event.get('new') or '',
-                'old': event.get('old') or '',
+                'user_name': display_value(event.get('user_name')),
+                # UTC, so it can be compared against utc_now(). display_value
+                # here would be the integration user's timezone AND date
+                # format, which pipeline.signals cannot safely compare.
+                'update_time': utc_value(event.get('update_time')),
+                'field': display_value(event.get('field')),
+                'new': display_value(event.get('new')),
+                'old': display_value(event.get('old')),
             }
             fingerprint = (
                 entry['user_name'], entry['update_time'],
@@ -200,7 +205,7 @@ class IncidentReader:
         rows = self.client.get('change_request', {
             'sysparm_query': f'number={number}',
             'sysparm_fields': 'number,state,short_description,close_code,end_date,active',
-            'sysparm_display_value': 'true',
+            'sysparm_display_value': DISPLAY_AND_VALUE,
             'sysparm_limit': 1,
         })
         return rows[0] if rows else None
@@ -209,7 +214,7 @@ class IncidentReader:
         rows = self.client.get('problem', {
             'sysparm_query': f'number={number}',
             'sysparm_fields': 'number,state,short_description,resolution_code,active',
-            'sysparm_display_value': 'true',
+            'sysparm_display_value': DISPLAY_AND_VALUE,
             'sysparm_limit': 1,
         })
         return rows[0] if rows else None
@@ -218,5 +223,5 @@ class IncidentReader:
         return self.client.get('m2m_kb_task', {
             'sysparm_query': f'task={sys_id}',
             'sysparm_fields': 'kb_knowledge,task,kb_knowledge.short_description',
-            'sysparm_display_value': 'true',
+            'sysparm_display_value': DISPLAY_AND_VALUE,
         })

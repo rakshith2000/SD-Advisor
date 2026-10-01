@@ -72,8 +72,8 @@
         </div>
         <div style="font:400 11px/1.5 {{ FONT }};color:{{ MUTED }};padding-top:3px;
                     font-variant-numeric:tabular-nums;">
-          {{ severity_label(row.severity) }} &middot; {{ row.age_days_display }} days old
-          &middot; idle {{ row.idle_days_display }} days
+          {{ severity_label(row.severity) }} &middot; open {{ row.age_display }}
+          &middot; idle {{ row.idle_display }}
           &middot; pending action owner: {{ row.pending_action_owner_label }}
           {%- if row.caller_name %} &middot; caller {{ row.caller_name }}{% endif %}
         </div>

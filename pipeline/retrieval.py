@@ -23,6 +23,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
 
 from core.logging_setup import get_logger
+from core.timeutil import utc_now
 
 log = get_logger('pipeline.retrieval')
 
@@ -119,7 +120,7 @@ class VectorIndex:
             self._matrix[entity_type] = matrix
             self._keys[entity_type] = keys
             self._meta[entity_type] = metas
-            self._loaded_at[entity_type] = datetime.datetime.now()
+            self._loaded_at[entity_type] = utc_now()
 
             log.info('Loaded %d %s vectors into memory', len(keys), entity_type)
             return len(keys)
@@ -181,7 +182,7 @@ class VectorIndex:
                     items: List[Tuple[str, str, List[float], Dict[str, Any]]]) -> int:
         """items: (entity_key, text_hash, vector, meta)"""
         written = 0
-        now = datetime.datetime.now()
+        now = utc_now()
 
         for entity_key, digest, vector, meta in items:
             self.db.upsert('embedding_store', {
@@ -316,7 +317,7 @@ def refresh_resolution_stats(db, resolved_incidents: List[Dict[str, Any]],
         key = scope_key(incident.get('category', ''), incident.get('subcategory', ''))
         buckets.setdefault(key, []).append(float(hours))
 
-    now = datetime.datetime.now()
+    now = utc_now()
     written = 0
 
     for key, samples in buckets.items():

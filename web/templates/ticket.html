@@ -237,8 +237,8 @@
       <div class="card-body">
         <dl class="kv">
           <dt>Pending action owner</dt><dd><strong>{{ row.pending_action_owner_label }}</strong></dd>
-          <dt>Age</dt><dd class="tnum">{{ row.age_days_display }} days</dd>
-          <dt>Idle</dt><dd class="tnum">{{ row.idle_days_display }} days</dd>
+          <dt>Age</dt><dd class="tnum">{{ row.age_display }}</dd>
+          <dt>Idle</dt><dd class="tnum">{{ row.idle_display }}</dd>
           <dt>Last agent action</dt>
           <dd class="tnum">{{ signal.last_agent_action_at or 'never' }}</dd>
           <dt>Last caller activity</dt>

@@ -23,6 +23,7 @@ from core.logging_setup import get_logger
 from pipeline.retrieval import load_baselines, scope_key
 from pipeline.scoring import compute_attention_score
 from pipeline.signals import extract_signals
+from core.timeutil import utc_now
 
 log = get_logger('pipeline.orchestrator')
 
@@ -40,7 +41,7 @@ class Orchestrator:
     def refresh_signals(self, tickets: Optional[List[Dict[str, Any]]] = None,
                         max_workers: int = 6) -> Dict[str, Any]:
         """Recompute signals and attention scores for the aged backlog."""
-        started = datetime.datetime.now()
+        started = utc_now()
         tickets = tickets if tickets is not None else self.ctx.sync.aged_tickets_needing_attention()
 
         if not tickets:
@@ -70,7 +71,7 @@ class Orchestrator:
                     log.exception('Signal extraction failed for %s',
                                   ticket.get('incident_number'))
 
-        duration = (datetime.datetime.now() - started).total_seconds()
+        duration = (utc_now() - started).total_seconds()
         log.info('Signals refreshed: %d scored, %d failed (%.1fs)', scored, failed, duration)
         return {'scored': scored, 'failed': failed, 'duration_s': round(duration, 1)}
 
@@ -138,9 +139,11 @@ class Orchestrator:
                        scoring: Dict[str, Any]) -> None:
         row = {
             'incident_number': number,
-            'computed_at': datetime.datetime.now().replace(microsecond=0),
+            'computed_at': utc_now().replace(microsecond=0),
             'age_days': signals.get('age_days') or 0,
             'idle_days': signals.get('idle_days') or 0,
+            'age_minutes': int(signals.get('age_minutes') or 0),
+            'idle_minutes': int(signals.get('idle_minutes') or 0),
             'days_in_state': signals.get('days_in_state') or 0,
             'last_agent_action_at': signals.get('last_agent_action_at'),
             'last_caller_activity_at': signals.get('last_caller_activity_at'),
@@ -174,7 +177,7 @@ class Orchestrator:
     def refresh_recommendations(self, tickets: Optional[List[Dict[str, Any]]] = None,
                                 limit: Optional[int] = None,
                                 force: bool = False) -> Dict[str, Any]:
-        started = datetime.datetime.now()
+        started = utc_now()
 
         rows = tickets if tickets is not None else self._tickets_with_signals()
         if limit:
@@ -206,7 +209,7 @@ class Orchestrator:
                     failed += 1
                     log.exception('Recommendation failed for %s', row.get('incident_number'))
 
-        duration = (datetime.datetime.now() - started).total_seconds()
+        duration = (utc_now() - started).total_seconds()
         usage = getattr(self.ctx.llm, 'usage', {})
         log.info('Recommendations: %d new, %d cached, %d failed (%.1fs) tokens=%s',
                  analysed, cached, failed, duration, usage.get('prompt_tokens'))
@@ -244,7 +247,7 @@ class Orchestrator:
             try:
                 signals = self._load_signals(ticket['incident_number']) or {}
                 record = stub.deterministic_fallback(ticket, signals)
-                record['input_hash'] = 'fallback-' + datetime.date.today().isoformat()
+                record['input_hash'] = 'fallback-' + utc_now().date().isoformat()
                 record['prompt_version'] = 'fallback'
                 record['superseded'] = 0
                 self.db.upsert('recommendation', record, update_columns=[
@@ -254,7 +257,7 @@ class Orchestrator:
             except Exception:
                 log.exception('Fallback failed for %s', ticket.get('incident_number'))
 
-        duration = (datetime.datetime.now() - started).total_seconds()
+        duration = (utc_now() - started).total_seconds()
         return {'analysed': 0, 'cached': 0, 'failed': 0,
                 'fallback': written, 'duration_s': round(duration, 1)}
 
@@ -319,7 +322,7 @@ class Orchestrator:
              ORDER BY attention_score DESC
         """)
 
-        today = datetime.date.today()
+        today = utc_now().date()
         fired: List[Dict[str, Any]] = []
 
         for row in rows:
@@ -338,7 +341,7 @@ class Orchestrator:
                     'incident_number': row['incident_number'],
                     'alert_type': flag,
                     'fired_on': today,
-                    'fired_at': datetime.datetime.now(),
+                    'fired_at': utc_now(),
                     'channel': 'email',
                     'payload': json.dumps({
                         'attention_score': row.get('attention_score'),

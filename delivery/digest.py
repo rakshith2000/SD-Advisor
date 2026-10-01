@@ -18,6 +18,7 @@ from typing import Any, Dict, List, Optional
 from core.logging_setup import get_logger
 from pipeline.scoring import top_reasons
 from pipeline.signals import SERVICE_DESK
+from core.timeutil import format_duration, format_duration_days, utc_now
 
 log = get_logger('delivery.digest')
 
@@ -124,8 +125,10 @@ class DigestBuilder:
         item['low_confidence'] = bool(row.get('confidence') is not None
                                       and float(row.get('confidence')) < 0.5)
 
-        item['age_days_display'] = f"{float(row.get('age_days') or 0):.0f}"
-        item['idle_days_display'] = f"{float(row.get('idle_days') or 0):.1f}"
+        # Rendered from the exact minute columns, not from age_days - two
+        # decimal places of a day cannot express "30 Mins".
+        item['age_display'] = format_duration(row.get('age_minutes'))
+        item['idle_display'] = format_duration(row.get('idle_minutes'))
 
         item['url'] = f"{self.base_url}/ticket/{row['incident_number']}" if self.base_url else ''
         return item
@@ -149,7 +152,7 @@ class DigestBuilder:
 
         Leads should be able to read only the first two buckets.
         """
-        since = datetime.datetime.now() - datetime.timedelta(hours=hours)
+        since = utc_now() - datetime.timedelta(hours=hours)
         numbers = [r['incident_number'] for r in rows]
         if not numbers:
             return {'new': [], 'worsening': [], 'steady': []}
@@ -230,6 +233,10 @@ class DigestBuilder:
                 'max_score': max(scores) if scores else 0,
                 'avg_score': int(round(sum(scores) / len(scores))) if scores else 0,
                 'avg_idle_days': round(sum(idles) / len(idles), 1) if idles else 0.0,
+                # An average across incidents, so there is no minute column to
+                # draw on; derived from days and therefore coarser.
+                'avg_idle_display': format_duration_days(
+                    sum(idles) / len(idles) if idles else 0.0),
                 'sla_breached': sum(1 for t in tickets if t.get('sla_breached')),
                 'prolonged_inactivity': sum(1 for t in tickets
                                         if 'PROLONGED_INACTIVITY' in (t.get('risk_flags') or [])),
@@ -264,7 +271,7 @@ class DigestBuilder:
                     ON c.incident_number = m.incident_number
                    AND c.customer_id     = m.customer_id
                  WHERE m.resolved_by IN ({placeholders})
-                   AND m.resolved_on >= DATE_SUB(NOW(), INTERVAL 30 DAY)
+                   AND m.resolved_on >= DATE_SUB(UTC_TIMESTAMP(), INTERVAL 30 DAY)
                    AND c.compliance_score >= 0
                  GROUP BY m.resolved_by
             """, agents)
@@ -290,7 +297,7 @@ class DigestBuilder:
         priority_rows = rows[:max_tickets]
 
         return {
-            'generated_at': datetime.datetime.now(),
+            'generated_at': utc_now(),
             'groups': assignment_groups or self.settings.assignment_groups,
             'summary': self.summarise(rows),
             'movement': {
@@ -311,7 +318,7 @@ class DigestBuilder:
     def build_agent_digest(self, agent: str, max_tickets: int = 15) -> Dict[str, Any]:
         rows = self.board_rows(agent=agent)
         return {
-            'generated_at': datetime.datetime.now(),
+            'generated_at': utc_now(),
             'agent': agent,
             'summary': self.summarise(rows),
             'tickets': rows[:max_tickets],

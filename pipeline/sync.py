@@ -9,6 +9,9 @@ Runs every few minutes. Two modes:
 The watermark is deliberately rewound by a small overlap before each run:
 ServiceNow's sys_updated_on has second granularity and records can land out of
 order, so an exact-boundary watermark drops updates.
+
+Every timestamp written here is naive UTC, taken from the ServiceNow `value`
+field rather than `display_value`. See core.timeutil.
 """
 
 import datetime
@@ -17,7 +20,8 @@ import json
 from typing import Any, Dict, List, Optional, Tuple
 
 from core.logging_setup import get_logger
-from core.snow.base import display_value, parse_ts, reference_sys_id
+from core.snow.base import display_value, reference_sys_id, utc_ts
+from core.timeutil import utc_now
 
 log = get_logger('pipeline.sync')
 
@@ -63,10 +67,12 @@ def flatten_incident(raw: Dict[str, Any]) -> Dict[str, Any]:
         'contact_type': display_value(raw.get('contact_type')),
         'rfc': display_value(raw.get('rfc')),
         'problem_id': display_value(raw.get('problem_id')),
-        'opened_at': parse_ts(raw.get('opened_at')) or parse_ts(raw.get('sys_created_on')),
-        'sys_updated_on': parse_ts(raw.get('sys_updated_on')),
-        'reassignment_count': int(str(raw.get('reassignment_count') or 0) or 0),
-        'reopen_count': int(str(raw.get('reopen_count') or 0) or 0),
+        # Datetimes come from `value` (UTC); everything above from
+        # `display_value`. See core.timeutil for why.
+        'opened_at': utc_ts(raw.get('opened_at')) or utc_ts(raw.get('sys_created_on')),
+        'sys_updated_on': utc_ts(raw.get('sys_updated_on')),
+        'reassignment_count': int(display_value(raw.get('reassignment_count')) or 0),
+        'reopen_count': int(display_value(raw.get('reopen_count')) or 0),
         'active': 1,
     }
 
@@ -80,7 +86,7 @@ class TicketSync:
     # -- entry points ------------------------------------------------------
 
     def run(self, full: bool = False) -> Dict[str, Any]:
-        started = datetime.datetime.now()
+        started = utc_now()
         try:
             if full:
                 rows, high_water = self._fetch_full(started)
@@ -98,7 +104,7 @@ class TicketSync:
 
             log.info('Sync %s complete: %d fetched, %d changed, %d retired (%.1fs)',
                      mode, len(rows), changed, retired,
-                     (datetime.datetime.now() - started).total_seconds())
+                     (utc_now() - started).total_seconds())
 
             return {'mode': mode, 'fetched': len(rows), 'changed': changed,
                     'retired': retired, 'watermark': high_water}
@@ -143,7 +149,7 @@ class TicketSync:
     @staticmethod
     def _high_water(rows: List[Dict[str, Any]],
                     fallback: datetime.datetime) -> datetime.datetime:
-        stamps = [parse_ts(r.get('sys_updated_on')) for r in rows]
+        stamps = [utc_ts(r.get('sys_updated_on')) for r in rows]
         stamps = [s for s in stamps if s is not None]
         return max(stamps) if stamps else fallback
 
@@ -203,7 +209,8 @@ class TicketSync:
             except Exception:
                 continue
 
-            still_open = bool(current) and str(current.get('active', '')).lower() in ('true', '1')
+            still_open = bool(current) and display_value(
+                current.get('active')).lower() in ('true', '1')
             if not still_open:
                 self.db.update('watched_ticket', {'active': 0, 'last_synced_at': now},
                                conditions=[{'col': 'incident_number', 'op': 'eq', 'val': number}])
@@ -215,7 +222,7 @@ class TicketSync:
 
     def aged_tickets_needing_attention(self, include_snoozed: bool = False) -> List[Dict[str, Any]]:
         """In-scope, active, older than the threshold, not snoozed."""
-        cutoff = datetime.datetime.now() - datetime.timedelta(days=self.settings.aged_after_days)
+        cutoff = utc_now() - datetime.timedelta(days=self.settings.aged_after_days)
 
         sql = """
             SELECT w.*
@@ -227,7 +234,7 @@ class TicketSync:
         params: List[Any] = [cutoff]
 
         if not include_snoozed:
-            sql += ' AND (s.incident_number IS NULL OR s.snoozed_until <= NOW())'
+            sql += ' AND (s.incident_number IS NULL OR s.snoozed_until <= UTC_TIMESTAMP())'
 
         groups = self.settings.assignment_groups
         if groups:

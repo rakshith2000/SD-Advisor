@@ -18,6 +18,7 @@ from jinja2 import Environment, FileSystemLoader, select_autoescape
 from core.logging_setup import get_logger
 from delivery.digest import DigestBuilder
 from delivery.mailer import Mailer
+from core.timeutil import utc_now
 
 log = get_logger('delivery.dispatch')
 
@@ -186,7 +187,7 @@ class Dispatcher:
 
         html = self.env.get_template('risk_alert.html').render(
             alerts=decorated,
-            generated_at=datetime.datetime.now(),
+            generated_at=utc_now(),
             base_url=self.builder.base_url,
             shadow_mode=self.settings.shadow_mode,
         )

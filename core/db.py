@@ -17,6 +17,7 @@ import pymysql
 import pymysql.cursors
 
 from core.logging_setup import get_logger
+from core.timeutil import utc_now
 
 log = get_logger('core.db')
 
@@ -218,7 +219,7 @@ class Database:
         self.upsert('sync_state', {
             'name': name,
             'watermark': watermark,
-            'last_run_at': datetime.datetime.now(),
+            'last_run_at': utc_now(),
             'last_status': status,
             'detail': detail[:2000] if detail else None,
         }, update_columns=['watermark', 'last_run_at', 'last_status', 'detail'])
