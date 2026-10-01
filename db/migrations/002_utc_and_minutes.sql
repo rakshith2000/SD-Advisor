@@ -32,7 +32,7 @@
 -- discard and rebuild rather than attempt a correction:
 --
 --   TRUNCATE TABLE ticket_signal;
---   DELETE FROM sync_state WHERE source = 'incident_delta';   -- forces a cold start
+--   DELETE FROM sync_state WHERE name = 'incident_delta';   -- forces a cold start
 --   -- then:  python run.py sync --full && python run.py signals
 --
 -- Run ops/probe_timezone.py first. If it reports the integration user is on

@@ -1,14 +1,21 @@
 #!/usr/bin/env python3
 """Diagnostic: measure the timezone and date-format skew on this instance.
 
-Every incident read in this project uses sysparm_display_value=true, which
-returns datetimes in the integration user's timezone and date format. Signals
-then compare those values against datetime.datetime.now(), which is this
-server's local clock. Where the two differ, every age and inactivity figure is
-wrong by the offset - silently, and in the same direction for every incident.
+ServiceNow returns each datetime twice - `value` in UTC, `display_value` in
+the integration user's timezone and date format. Reads now take the value
+side and compare against utc_now(), so neither side of an elapsed-time
+subtraction depends on a user profile.
 
-This prints the three clocks side by side so the skew is a number rather than
-a theory.
+This reports three things the change turns on:
+
+  * the offset between the two representations, which determines whether
+    timestamps written before the change need rebuilding;
+  * the error the superseded code actually made, which is the difference
+    between the ServiceNow user's offset and THIS SERVER'S offset - not
+    either one alone. Where both happened to be set to the same zone the
+    old figures were correct, but only by coincidence;
+  * whether display_value parses at all, since a non-ISO date format would
+    have emptied the timeline silently.
 
 Read-only.
 
@@ -34,10 +41,16 @@ def main() -> int:
     ctx = get_context()
     client = ctx.snow
 
+    server_local = datetime.datetime.now()
+    server_utc = (datetime.datetime.now(datetime.timezone.utc)
+                  .replace(tzinfo=None, microsecond=0))
+    server_offset = round((server_local.replace(microsecond=0)
+                           - server_utc).total_seconds() / 3600.0, 2)
+
     print('=== clocks ===')
-    print(f'  this server (local)      : {datetime.datetime.now():{ISO}}  '
-          f'tz={time.tzname[0]}')
-    print(f'  this server (UTC)        : {datetime.datetime.utcnow():{ISO}}')
+    print(f'  this server (local)      : {server_local:{ISO}}  tz={time.tzname[0]}')
+    print(f'  this server (UTC)        : {server_utc:{ISO}}')
+    print(f'  this server offset       : {server_offset:+.2f} hours from UTC')
     print()
 
     # The integration user's own profile.
@@ -109,28 +122,40 @@ def main() -> int:
         print('  Could not compute a skew.')
         return 1
 
-    skew = skews[0]
-    if abs(skew) < 0.01:
-        print('  The integration user is on UTC, so display_value and value agree.')
-        print('  Age and inactivity figures are correct today, but they depend on a')
-        print('  ServiceNow user profile setting rather than on anything in this')
-        print('  repository. An admin changing that profile would skew every figure')
-        print('  with no error raised.')
+    snow_offset = skews[0]
+    print(f'  ServiceNow display_value : {snow_offset:+.2f} hours from UTC')
+    print(f'  This server local clock  : {server_offset:+.2f} hours from UTC')
+
+    # What the superseded code actually did: compare a display_value against
+    # the server's LOCAL clock. The error was the difference between the two
+    # offsets, not either one on its own.
+    legacy_error = server_offset - snow_offset
+    print(f'  Superseded comparison    : {legacy_error:+.2f} hours of error')
+    print()
+
+    if abs(legacy_error) < 0.01:
+        print('  The two clocks happen to agree, so age and inactivity were correct')
+        print('  under the previous code - by coincidence, not by design. Correctness')
+        print('  depended on this server and the ServiceNow user profile being set to')
+        print('  the same zone; changing either would have skewed every figure with')
+        print('  nothing raised. Reading the value field removes that dependency.')
     else:
-        print(f'  display_value is {skew:+.2f} hours from UTC.')
-        print()
-        print('  Incident reads use display_value=true, so opened_at and the history')
-        print('  timeline arrive on that offset clock. signals compares them against')
-        print(f'  this server\'s now(), so age_days and idle_days are wrong by'
-              f' {abs(skew):.2f} hours')
-        print(f'  ({abs(skew) / 24.0:.3f} days) for every incident, in the same direction.')
-        print()
-        print('  Thresholds affected: aged_after_days, inactivity_days,')
+        print(f'  Age and inactivity were wrong by {abs(legacy_error):.2f} hours')
+        print(f'  ({abs(legacy_error) / 24.0:.3f} days) for every incident, in the same')
+        print('  direction. Thresholds affected: aged_after_days, inactivity_days,')
         print('  prolonged_inactivity_days, closure_silence_days.')
+
+    print()
+    if abs(snow_offset) >= 0.01:
+        print(f'  Timestamps already stored were written on the display clock, so they')
+        print(f'  are {abs(snow_offset):.2f} hours from the UTC values written from now on.')
+        print('  ticket_signal also mixed clocks within a single row: projected_breach_at')
+        print('  came from task_sla, which was already read from the value field.')
         print()
-        print('  task_sla is NOT affected: core/snow/sla.py already reads planned_end_time')
-        print('  and business_time_left from the value field, so projected_breach_at is')
-        print('  true UTC. That means ticket_signal currently mixes both clocks in one row.')
+        print('  Rebuild the derived tables after migrating - see')
+        print('  db/migrations/002_utc_and_minutes.sql.')
+    else:
+        print('  The integration user is on UTC, so stored timestamps need no rebuild.')
 
     return 0
 
