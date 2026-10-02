@@ -1,0 +1,119 @@
+{#
+  Access request awaiting a decision, sent to every administrator.
+
+  The button below is a DEEP LINK, not an action. Mail security scanners -
+  Defender for Office 365 Safe Links among them - fetch URLs found in email in
+  order to inspect them, so a link that granted the role on GET would approve
+  every request seconds after it was sent, before a human saw it, attributed to
+  nobody. This link opens a page; the grant is a POST from an authenticated
+  administrator's session.
+#}
+{%- set INK = '#0b0b0b' -%}
+{%- set INK2 = '#52514e' -%}
+{%- set MUTED = '#898781' -%}
+{%- set SURFACE = '#fcfcfb' -%}
+{%- set PLANE = '#f9f9f7' -%}
+{%- set RULE = '#e1e0d9' -%}
+{%- set WARNING = '#fab219' -%}
+{%- set ACCENT = '#2a78d6' -%}
+{%- set FONT = "system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" -%}
+
+<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:0;background:{{ PLANE }};">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:{{ PLANE }};">
+<tr><td align="center" style="padding:20px 12px;">
+<table role="presentation" width="620" cellpadding="0" cellspacing="0"
+       style="width:620px;max-width:100%;background:{{ SURFACE }};border:1px solid {{ RULE }};border-radius:8px;">
+
+  <tr><td style="padding:18px 20px 12px 20px;border-bottom:1px solid {{ RULE }};">
+    <div style="font:600 16px/1.3 {{ FONT }};color:{{ INK }};">
+      Access request awaiting a decision
+    </div>
+    <div style="font:400 12px/1.5 {{ FONT }};color:{{ INK2 }};padding-top:3px;">
+      {{ request.full_name or request.username }} has asked for the
+      {{ request.to_role|title }} role.
+      Sent to every administrator &mdash; only one of you needs to act.
+    </div>
+  </td></tr>
+
+  <tr><td style="padding:14px 20px;border-bottom:1px solid {{ RULE }};">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0"
+           style="font:400 13px/1.6 {{ FONT }};color:{{ INK }};">
+      <tr>
+        <td style="width:150px;color:{{ MUTED }};vertical-align:top;">Who</td>
+        <td>{{ request.full_name or request.username }}
+          <span style="color:{{ MUTED }};">({{ request.username }})</span></td>
+      </tr>
+      {% if request.email %}
+      <tr>
+        <td style="color:{{ MUTED }};vertical-align:top;">Email</td>
+        <td>{{ request.email }}</td>
+      </tr>
+      {% endif %}
+      <tr>
+        <td style="color:{{ MUTED }};vertical-align:top;">Change</td>
+        <td>{{ request.from_role|title }} &rarr; <strong>{{ request.to_role|title }}</strong></td>
+      </tr>
+      <tr>
+        <td style="color:{{ MUTED }};vertical-align:top;">Queues requested</td>
+        <td>{{ request.requested_groups or 'None specified' }}</td>
+      </tr>
+      <tr>
+        <td style="color:{{ MUTED }};vertical-align:top;">Raised</td>
+        <td>{{ request.created_at|datefmt('%d %b %Y %H:%M') }} UTC</td>
+      </tr>
+      <tr>
+        <td style="color:{{ MUTED }};vertical-align:top;">Expires</td>
+        <td>{{ request.expires_at|datefmt('%d %b %Y') }} if nobody decides</td>
+      </tr>
+    </table>
+  </td></tr>
+
+  <tr><td style="padding:14px 20px;border-bottom:1px solid {{ RULE }};">
+    <div style="font:600 12px/1.4 {{ FONT }};color:{{ MUTED }};
+                text-transform:uppercase;letter-spacing:0.04em;">Their reason</div>
+    <div style="font:400 13px/1.6 {{ FONT }};color:{{ INK }};padding-top:5px;
+                white-space:pre-wrap;">{{ request.justification }}</div>
+  </td></tr>
+
+  {#
+    The coupling an administrator will not otherwise see: leads_for() selects
+    on role IN ('ADMIN','LEAD'), so granting Lead also starts delivering mail
+    that carries incident descriptions and caller names.
+  #}
+  <tr><td style="padding:12px 20px;border-bottom:1px solid {{ RULE }};
+                 background:#fffaf0;">
+    <div style="font:400 12px/1.6 {{ FONT }};color:{{ INK2 }};">
+      <strong style="color:{{ WARNING }};">Note.</strong>
+      Approving adds {{ request.email or 'this account' }} to the daily lead
+      digest and to risk alerts for the queues you grant. Those messages
+      contain incident descriptions and caller names.
+    </div>
+  </td></tr>
+
+  <tr><td style="padding:16px 20px 20px 20px;">
+    {% if base_url %}
+    <table role="presentation" cellpadding="0" cellspacing="0"><tr>
+      <td style="background:{{ ACCENT }};border-radius:5px;">
+        <a href="{{ base_url }}/admin/role-requests/{{ request.id }}"
+           style="display:inline-block;padding:9px 18px;font:600 12px/1 {{ FONT }};
+                  color:#ffffff;text-decoration:none;">Review this request</a>
+      </td>
+    </tr></table>
+    {% endif %}
+    <div style="font:400 11px/1.6 {{ FONT }};color:{{ MUTED }};padding-top:12px;">
+      {% if shadow_mode %}Shadow mode is on for digests; this notification is sent
+      regardless so the request is not left unseen. {% endif %}
+      Opening the link shows the request &mdash; approving or declining is a
+      separate click once you are signed in. Nothing is decided by following
+      this link.
+    </div>
+  </td></tr>
+
+</table>
+</td></tr>
+</table>
+</body>
+</html>

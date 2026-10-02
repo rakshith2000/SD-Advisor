@@ -11,6 +11,8 @@
     python run.py preview -o out.html
     python run.py adduser --username x --role LEAD
     python run.py passwd  --username x
+    python run.py grant   --username x --role LEAD --groups "Service Desk"
+    python run.py sync-users [--dry-run]   # reconcile accounts against Keycloak
     python run.py sla-map          # verify how each SLA definition classifies
     python run.py doctor           # check every dependency and exit
 
@@ -32,6 +34,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from core.context import get_context                     # noqa: E402
 from core.logging_setup import get_logger                # noqa: E402
+from core.timeutil import utc_now                        # noqa: E402
 
 log = get_logger('run')
 
@@ -213,6 +216,72 @@ def cmd_passwd(args) -> int:
     return 0
 
 
+def cmd_grant(args) -> int:
+    """Set an account's role and assignment group scope directly.
+
+    The administrator's path that does not go through the request workflow -
+    needed for the first administrator, for granting ADMIN (which is
+    deliberately not requestable), and whenever Keycloak is unavailable.
+    """
+    from web.auth import UserStore
+
+    ctx = get_context(args.config)
+    store = UserStore(ctx.db)
+
+    account = store.live(args.username)
+    if not account:
+        print(f'No account named {args.username!r}', file=sys.stderr)
+        return 1
+
+    groups = [g.strip() for g in (args.groups or '').split(',') if g.strip()]
+    if groups:
+        known = {g.lower(): g for g in ctx.known_assignment_groups()}
+        unknown = [g for g in groups if g.lower() not in known]
+        if unknown:
+            # A near-miss on a group name errors nowhere downstream; it simply
+            # matches no tickets, and the board silently shows an empty board.
+            print(f'Not a known assignment group: {", ".join(unknown)}', file=sys.stderr)
+            print(f'Known: {", ".join(ctx.known_assignment_groups())}', file=sys.stderr)
+            return 1
+        groups = [known[g.lower()] for g in groups]
+
+    try:
+        store.set_role(args.username, args.role, groups or None, source='MANUAL')
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+
+    print(f"{args.username}: {account['role']} -> {args.role.upper()}"
+          f"{' scoped to ' + ', '.join(groups) if groups else ' (all groups)'}")
+    if args.role.upper() in ('ADMIN', 'LEAD'):
+        print('This account will now receive the daily digest and risk alerts.')
+    return 0
+
+
+def cmd_sync_users(args) -> int:
+    """Reconcile accounts against Keycloak. Read-only against Keycloak."""
+    from scheduler.jobs import JobRunner
+
+    ctx = get_context(args.config)
+    result = JobRunner(ctx).reconcile_users(dry_run=args.dry_run)
+
+    if result.get('skipped'):
+        print(f"Skipped: {result['skipped']}")
+        return 0
+
+    _pretty(result)
+
+    if result.get('refused'):
+        print('\nRefused: too many accounts appeared to have gone at once. Nothing '
+              'was changed. See the log for the reasoning.', file=sys.stderr)
+        return 2
+    if result.get('errors'):
+        print(f"\n{result['errors']} account(s) could not be checked or were "
+              f"protected. See the log.", file=sys.stderr)
+        return 1
+    return 0
+
+
 def cmd_sla_map(args) -> int:
     """Show how every SLA definition classifies, so it can be verified.
 
@@ -391,6 +460,116 @@ def cmd_doctor(args) -> int:
     check('users', lambda: (
         f"{ctx.db.query_one('SELECT COUNT(*) AS n FROM advisor_user WHERE active = 1')['n']} active"))
 
+    def admin_floor_check():
+        """The one lockout this service cannot talk itself out of.
+
+        Roles are written by the approval workflow and by the reconcile job, so
+        a mistaken demotion or a misconfigured realm can leave no administrator
+        at all - and nothing in the UI can promote one.
+        """
+        admins = ctx.db.query(
+            "SELECT username FROM advisor_user WHERE active = 1 AND role = 'ADMIN'")
+        if not admins:
+            raise RuntimeError(
+                'No active ADMIN account. Nobody can tune weights, decide access '
+                'requests or administer users. Fix with: '
+                'python run.py grant --username <name> --role ADMIN')
+
+        names = ', '.join(a['username'] for a in admins)
+        if len(admins) == 1:
+            return (f'{names} - the ONLY administrator. A second one means a lockout '
+                    f'is recoverable without the CLI.')
+        return f'{len(admins)} administrators: {names}'
+
+    check('admin floor', admin_floor_check)
+
+    def access_requests_check():
+        pending = ctx.db.query(
+            "SELECT username, created_at FROM role_request WHERE status = 'PENDING' "
+            " ORDER BY created_at")
+        if not pending:
+            return 'none pending'
+
+        oldest = pending[0]
+        age_days = (utc_now() - oldest['created_at']).days
+        if age_days >= 7:
+            raise RuntimeError(
+                f'{len(pending)} access request(s) pending, oldest from '
+                f'{oldest["username"]} is {age_days} days old. Either the '
+                f'notification is not reaching the administrators, or nobody is '
+                f'reading it - check runtime.shadow_mode_exempt includes '
+                f'role_request, and that an active ADMIN has an email address.')
+        return f'{len(pending)} pending, oldest {age_days}d'
+
+    check('access requests', access_requests_check)
+
+    mode = str(ctx.settings.get('auth.mode', 'local')).strip().lower()
+    if mode in ('oidc', 'both'):
+        def oidc_check():
+            from web.oidc import OIDCProvider
+            provider = OIDCProvider(ctx.settings, ctx.vault, 'doctor-probe')
+            metadata = provider.metadata()
+
+            missing = [e for e in ('authorization_endpoint', 'token_endpoint', 'jwks_uri')
+                       if not metadata.get(e)]
+            if missing:
+                raise RuntimeError(f'The issuer does not advertise: {", ".join(missing)}')
+
+            keys = provider._load_jwks()
+            if not keys.keys:
+                raise RuntimeError('The issuer publishes no signing keys')
+
+            # Fetched rather than assumed: a missing client secret surfaces
+            # here instead of on the first person who tries to sign in.
+            provider.client_secret
+
+            if not metadata.get('end_session_endpoint'):
+                return (f'{provider.issuer} ({len(keys.keys)} signing keys) - no '
+                        f'end_session_endpoint, so sign-out will not end the '
+                        f'Keycloak session')
+            return f'{provider.issuer} ({len(keys.keys)} signing keys)'
+
+        check('oidc issuer', oidc_check)
+
+        def redirect_check():
+            from urllib.parse import urlparse
+            configured = str(ctx.settings.require('auth.oidc.redirect_uri'))
+            base = str(ctx.settings.get('web.base_url', ''))
+
+            redirect_host = urlparse(configured).netloc.lower()
+            base_host = urlparse(base).netloc.lower()
+            if base_host and redirect_host != base_host:
+                raise RuntimeError(
+                    f'auth.oidc.redirect_uri points at {redirect_host!r} but '
+                    f'web.base_url is {base_host!r}. Keycloak matches the redirect '
+                    f'URI exactly, and the browser has to reach it - these must be '
+                    f'the same host.')
+            if not configured.lower().startswith('https'):
+                raise RuntimeError(
+                    f'{configured} is not HTTPS. The authorization code and the '
+                    f'session cookie would cross the network in cleartext.')
+            return configured
+
+        check('oidc redirect', redirect_check)
+
+        if ctx.settings.get('auth.reconcile.enabled', False):
+            def reconcile_check():
+                from core.keycloak import KeycloakAdmin
+                status = KeycloakAdmin(ctx.settings, ctx.vault).ping()
+                return f"realm {status['realm']} readable (view-users granted)"
+
+            check('keycloak admin', reconcile_check)
+        else:
+            checks.append(('INFO', 'keycloak admin',
+                           'reconcile disabled - a leaver stays on the digest until '
+                           'deactivated by hand'))
+
+    local_enabled = bool(ctx.settings.get('auth.local_login.enabled', True))
+    allow = ', '.join(ctx.settings.get('auth.local_login.allow_roles', ['ADMIN', 'LEAD', 'VIEWER']))
+    checks.append(('INFO', 'auth mode',
+                   f'{mode}' + (f'; password sign-in for {allow}' if local_enabled
+                                else '; password sign-in disabled')))
+
     audit = 'configured' if ctx.audit_db else 'disabled (coaching rollup will be omitted)'
     checks.append(('INFO', 'audit database link', audit))
     checks.append(('INFO', 'shadow mode',
@@ -445,6 +624,18 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument('--role', default='LEAD', choices=['ADMIN', 'LEAD', 'VIEWER'])
     p.add_argument('--groups', help='comma-separated assignment groups; blank means all')
     p.set_defaults(func=cmd_adduser)
+
+    p = sub.add_parser('grant', help="set an account's role and group scope")
+    p.add_argument('--username', required=True)
+    p.add_argument('--role', required=True, choices=['ADMIN', 'LEAD', 'VIEWER'])
+    p.add_argument('--groups', help='comma-separated assignment groups; blank means all')
+    p.set_defaults(func=cmd_grant)
+
+    p = sub.add_parser('sync-users',
+                       help='reconcile accounts against Keycloak (read-only there)')
+    p.add_argument('--dry-run', action='store_true',
+                   help='print what would change without changing it')
+    p.set_defaults(func=cmd_sync_users)
 
     p = sub.add_parser('passwd', help='change an account password')
     p.add_argument('--username', required=True)

@@ -1,0 +1,168 @@
+{% extends "base.html" %}
+{% block title %}Your profile &middot; Aged Ticket Advisor{% endblock %}
+
+{% block content %}
+
+<div class="page-head">
+  <h1>Your profile</h1>
+  <p>What your account can see and do, and how to ask for more.</p>
+</div>
+
+{% if error %}<div class="banner"><div><strong>{{ error }}</strong></div></div>{% endif %}
+{% if sent %}
+<div class="banner info">
+  <div>
+    <strong>Request sent.</strong>
+    Every administrator has been notified. You will get an email when one of
+    them decides, and the status below will change.
+  </div>
+</div>
+{% endif %}
+
+<div class="card">
+  <div class="card-head"><h2>Account</h2></div>
+  <div class="card-body">
+    <table class="data">
+      <tbody>
+        <tr><td>Name</td><td>{{ account.full_name or user.full_name }}</td></tr>
+        <tr><td>Username</td><td>{{ account.username or user.username }}</td></tr>
+        <tr><td>Email</td><td>{{ account.email or 'Not set' }}</td></tr>
+        <tr>
+          <td>Role</td>
+          <td>
+            <strong>{{ (account.role or user.role)|title }}</strong>
+            <div class="subtle">
+              {% if (account.role or user.role) == 'ADMIN' %}
+                Full access, including scoring weights and user administration.
+              {% elif (account.role or user.role) == 'LEAD' %}
+                Review the board, record decisions, snooze and re-analyse.
+              {% else %}
+                Read only. You cannot record decisions or snooze tickets.
+              {% endif %}
+            </div>
+          </td>
+        </tr>
+        <tr>
+          <td>Assignment groups</td>
+          <td>
+            {% if scope %}
+              {% for g in scope %}<span class="chip">{{ g }}</span>{% endfor %}
+            {% else %}
+              <span class="subtle">None. The board will be empty until you have at
+              least one group in scope.</span>
+            {% endif %}
+          </td>
+        </tr>
+        <tr>
+          <td>Sign-in</td>
+          <td>{{ 'Single sign-on' if account.auth_source == 'OIDC' else 'Local password' }}</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{# ------------------------------------------------------------------ #}
+
+{% if open_request %}
+<div class="card">
+  <div class="card-head">
+    <h2>Request awaiting a decision</h2>
+    <span class="sub">Raised {{ open_request.created_at.strftime('%d %b %Y %H:%M') }} UTC</span>
+  </div>
+  <div class="card-body">
+    <p>
+      You have asked for <strong>{{ open_request.to_role|title }}</strong> on
+      {{ open_request.requested_groups }}.
+      Administrators have been notified. If nobody decides by
+      {{ open_request.expires_at.strftime('%d %b %Y') }} the request closes
+      automatically and you can ask again.
+    </p>
+    <form method="post" action="/profile/request-role/{{ open_request.id }}/cancel">
+      <button class="btn small" type="submit">Withdraw this request</button>
+    </form>
+  </div>
+</div>
+
+{% elif requestable and user.role in ('VIEWER',) %}
+<div class="card">
+  <div class="card-head">
+    <h2>Request additional access</h2>
+    <span class="sub">Goes to every administrator for a decision</span>
+  </div>
+  <div class="card-body">
+    <form method="post" action="/profile/request-role">
+      <div class="field">
+        <label for="to_role">Role</label>
+        <select id="to_role" name="to_role">
+          {% for role in requestable %}
+          <option value="{{ role }}">{{ role|title }}</option>
+          {% endfor %}
+        </select>
+        <div class="subtle">
+          Lead adds the ability to record decisions, snooze tickets and trigger
+          re-analysis &mdash; and subscribes you to the daily digest and risk
+          alerts for the queues you are granted.
+        </div>
+      </div>
+
+      <div class="field">
+        <label for="groups">Assignment groups you need</label>
+        <select id="groups" name="groups" multiple size="6">
+          {% for g in all_groups %}
+          <option value="{{ g }}">{{ g }}</option>
+          {% endfor %}
+        </select>
+        <div class="subtle">Hold Ctrl (or Cmd) to select more than one.</div>
+      </div>
+
+      <div class="field">
+        <label for="justification">Why you need it</label>
+        <textarea id="justification" name="justification" rows="4"
+                  minlength="{{ min_justification }}" required
+                  placeholder="For example: I run the morning triage for this queue and need to record outcomes."></textarea>
+        <div class="subtle">
+          At least {{ min_justification }} characters. This is what the
+          administrator reads when deciding.
+        </div>
+      </div>
+
+      <button class="btn primary" type="submit">Send request</button>
+    </form>
+  </div>
+</div>
+{% endif %}
+
+{# ------------------------------------------------------------------ #}
+
+{% if history %}
+<div class="card">
+  <div class="card-head"><h2>Your request history</h2></div>
+  <div class="card-body flush">
+    <table class="data">
+      <thead>
+        <tr><th>Raised</th><th>Requested</th><th>Status</th><th>Decided</th><th>Note</th></tr>
+      </thead>
+      <tbody>
+        {% for row in history %}
+        <tr>
+          <td class="tnum">{{ row.created_at.strftime('%d %b %Y') }}</td>
+          <td>{{ row.to_role|title }}<div class="subtle">{{ row.requested_groups or '-' }}</div></td>
+          <td>
+            <span class="chip {{ 'alert' if row.status == 'REJECTED' }}">{{ row.status|title }}</span>
+          </td>
+          <td class="tnum">
+            {% if row.decided_at %}{{ row.decided_at.strftime('%d %b %Y') }}
+              <div class="subtle">{{ row.decided_by or 'automatic' }}</div>
+            {% else %}&mdash;{% endif %}
+          </td>
+          <td class="subtle">{{ row.decision_note or '' }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+
+{% endblock %}

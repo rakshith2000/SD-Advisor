@@ -148,9 +148,60 @@
         "secret_file": "config/.session_secret"
     },
 
+    "auth": {
+        "_comment_mode": "local = password form only. oidc = Keycloak only. both = the SSO button and the password form side by side, which is how a cutover is run without a flag day.",
+        "mode": "local",
+
+        "oidc": {
+            "_comment": "Keycloak authenticates. It does NOT authorise: ADMIN/LEAD/VIEWER live in advisor_user.role and Keycloak is never told they exist, which is what keeps the service account read-only on a realm shared with other applications.",
+            "issuer": "https://keycloak.kohlerco.com/realms/AIOT",
+            "client_id": "ata-web",
+            "redirect_uri": "https://uswix865.kohlerco.com/oidc/callback",
+            "scopes": ["openid", "profile", "email"],
+
+            "_comment_tls": "An internal CA will fail verification on the token exchange exactly as ServiceNow did. Add the CA to ca_bundle; do not set verify_tls false - that request carries the client secret and the authorization code.",
+            "verify_tls": true,
+            "ca_bundle": "",
+
+            "_comment_identity": "The Entra object ID, not the username. A username can change; keying a JIT upsert on one would create a second account and orphan that person's feedback history.",
+            "identity_claim": "oid",
+            "username_claim": "preferred_username",
+
+            "jit_provisioning": true,
+            "default_role": "VIEWER",
+
+            "_comment_scope": "Readable by anyone in the realm who signs in, because any of them can obtain a VIEWER account. [] means no queues until an administrator or an approved request grants some - the board renders with a banner rather than appearing broken. Set this deliberately; the empty default is the safe one, not the useful one.",
+            "default_viewer_groups": []
+        },
+
+        "role_requests": {
+            "_comment": "A VIEWER asks for LEAD, every administrator is emailed, one of them decides. ADMIN is deliberately absent from allowed_targets: it can change scoring weights and trigger live mail, so it is granted directly by someone who already holds it.",
+            "enabled": true,
+            "allowed_targets": ["LEAD"],
+            "expire_after_days": 14,
+            "reject_cooldown_days": 30,
+            "require_justification_chars": 20
+        },
+
+        "local_login": {
+            "_comment": "Keep one local ADMIN after the OIDC cutover. If Keycloak is unreachable the scheduler keeps running and risk alerts keep going out, but without this nobody can sign in to snooze a ticket or stop a digest - the automation stays live while the controls go dark.",
+            "enabled": true,
+            "allow_roles": ["ADMIN", "LEAD", "VIEWER"]
+        },
+
+        "reconcile": {
+            "_comment": "Read-only (view-users). A leaver disabled in Entra can no longer sign in but stays active here, and would keep receiving the digest and every risk alert indefinitely.",
+            "enabled": false,
+            "client_id": "ata-reconcile",
+            "max_deactivate_pct": 30
+        }
+    },
+
     "runtime": {
         "shadow_mode": true,
         "_comment_shadow": "shadow_mode=true computes and stores everything but sends no email.",
+        "_comment_shadow_exempt": "run_types that still send while in shadow mode. An access request notification is one message to the administrators about the service itself, and someone is waiting on it - suppressing that during a trial is how a request goes unseen. mail.enabled=false still overrides this.",
+        "shadow_mode_exempt": ["role_request", "role_decision"],
         "log_level": "INFO",
         "log_dir": "logs",
         "redact_before_llm": true

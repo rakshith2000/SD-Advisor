@@ -28,6 +28,17 @@ class Mailer:
         self.enabled = bool(settings.get('mail.enabled', True))
         self.shadow = bool(settings.get('runtime.shadow_mode', True))
 
+        # Shadow mode exists to stop bulk mail reaching the wider service desk
+        # while output is still being validated. An access request notification
+        # is a different thing: one message to the administrators, about the
+        # service itself, triggered by a person who is waiting for an answer.
+        # Suppressing it leaves the request sitting unseen - and the trial is
+        # exactly when that workflow is being exercised.
+        self.shadow_exempt = {
+            str(t).strip() for t in (settings.get('runtime.shadow_mode_exempt', []) or [])
+            if str(t).strip()
+        }
+
         self.host = settings.get('mail.host')
         self.port = int(settings.get('mail.port', 587))
         self.use_starttls = bool(settings.get('mail.use_starttls', True))
@@ -59,8 +70,12 @@ class Mailer:
 
         full_subject = f'{self.subject_prefix} {subject}'.strip()
 
-        if self.shadow or not self.enabled:
-            reason = 'shadow mode' if self.shadow else 'mail disabled'
+        suppressed_by_shadow = self.shadow and run_type not in self.shadow_exempt
+
+        # mail.enabled=false is absolute - it means this host must not talk to
+        # the relay at all - so no run_type escapes it.
+        if suppressed_by_shadow or not self.enabled:
+            reason = 'shadow mode' if suppressed_by_shadow else 'mail disabled'
             log.info('[%s] would send %r to %s (%d tickets)',
                      reason, full_subject, ', '.join(recipients), ticket_count)
             self._record(run_type, audience, recipients, ticket_count, new_count,

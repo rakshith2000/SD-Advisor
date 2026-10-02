@@ -68,6 +68,80 @@ class Dispatcher:
                 matched.append(user)
         return matched
 
+    def admins(self) -> List[Dict[str, Any]]:
+        """Administrators with a deliverable address.
+
+        Unscoped by assignment group on purpose: an access request is about the
+        service, not about a queue, and every administrator should be able to
+        decide it.
+        """
+        return [u for u in self.db.retrieve('advisor_user', conditions=[
+            {'col': 'active', 'op': 'eq', 'val': 1},
+            {'col': 'role', 'op': 'eq', 'val': 'ADMIN'},
+        ], order_by='username') if u.get('email')]
+
+    # -- access requests ---------------------------------------------------
+
+    def send_role_request(self, request: Dict[str, Any]) -> Dict[str, Any]:
+        """Tell every administrator that someone is waiting on a decision.
+
+        The buttons in this message are deep links to the decision page, not
+        actions. They must stay that way: mail security scanners - Defender for
+        Office 365 Safe Links among them - fetch URLs found in email to inspect
+        them, so a link that approved on GET would approve every request within
+        seconds of sending, attributed to nobody. The link renders a page; the
+        grant is a POST from an authenticated administrator's session.
+        """
+        recipients = [a['email'] for a in self.admins()]
+        if not recipients:
+            # Not recoverable by waiting - the request sits until someone looks
+            # at the badge in the UI, which is why that badge exists.
+            log.error('Access request %s from %s has no administrator to notify - '
+                      'no active ADMIN account has an email address',
+                      request.get('id'), request.get('username'))
+            return {'sent': 0, 'reason': 'no_admins'}
+
+        html = self.env.get_template('role_request.html').render(
+            request=request,
+            base_url=self.builder.base_url,
+            generated_at=utc_now(),
+            shadow_mode=self.settings.shadow_mode,
+        )
+
+        who = request.get('full_name') or request.get('username')
+        subject = f"Access request: {who} - {request.get('to_role', '').title()}"
+
+        sent = self.mailer.send(
+            to=recipients, subject=subject, html_body=html,
+            run_type='role_request', audience='admin')
+        return {'sent': int(sent), 'recipients': recipients}
+
+    def send_role_decision(self, request: Dict[str, Any]) -> Dict[str, Any]:
+        """Close the loop with the person who asked.
+
+        Without this the requester has no way to tell the difference between
+        approved, declined, and nobody having looked yet.
+        """
+        if not request.get('email'):
+            log.info('No address for %s - decision not emailed', request.get('username'))
+            return {'sent': 0, 'reason': 'no_address'}
+
+        html = self.env.get_template('role_decision.html').render(
+            request=request,
+            base_url=self.builder.base_url,
+            generated_at=utc_now(),
+            shadow_mode=self.settings.shadow_mode,
+        )
+
+        approved = request.get('status') == 'APPROVED'
+        subject = (f"Access request {'approved' if approved else 'declined'}: "
+                   f"{request.get('to_role', '').title()}")
+
+        sent = self.mailer.send(
+            to=[request['email']], subject=subject, html_body=html,
+            run_type='role_decision', audience='user')
+        return {'sent': int(sent)}
+
     # -- lead digest -------------------------------------------------------
 
     def send_lead_digest(self, assignment_groups: Optional[List[str]] = None,

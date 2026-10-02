@@ -126,6 +126,7 @@ g.table(['Section', 'Title', 'Typical duration'], [
     ['20', 'Step 18 — Go live', '10 min'],
     ['21', 'Operations runbook', 'reference'],
     ['22', 'Troubleshooting', 'reference'],
+    ['22A', 'Single sign-on and access management (optional)', '2–3 h'],
     ['23', 'Rollback and uninstall', 'reference'],
     ['24', 'Appendices A–F', 'reference'],
 ], widths=[1.8, 11.0, 3.6])
@@ -2346,6 +2347,271 @@ python3 -c "import json;print(json.dumps(json.load(open('config/conf.json')),ind
                                                  >> /tmp/ata_diag.txt 2>&1
 
 echo 'conf.json contains no secrets, but review /tmp/ata_diag.txt before sharing it.'""")
+
+
+# ========================================================= SECTION 22A =====
+g.h1('22A. Single sign-on and access management')
+
+g.p('Optional. The service runs on local accounts out of the box; everything in this '
+    'section is additive and each phase is independently reversible.')
+
+g.h2('22A.1 What is authoritative where')
+
+g.p('Keycloak authenticates. It does not authorise. The three roles live in '
+    'advisor_user.role and Keycloak is never told they exist.')
+
+g.table(
+    ['Fact', 'Source of truth', 'Stored in'],
+    [
+        ['Who you are', 'Keycloak → Entra ID', '—'],
+        ['Identity key', 'Entra oid claim', 'advisor_user.external_id'],
+        ['Name, email', 'Token claims, refreshed each login', 'advisor_user'],
+        ['Role (ADMIN/LEAD/VIEWER)', 'This application', 'advisor_user.role'],
+        ['Queue scope', 'This application', 'advisor_user.assignment_groups'],
+        ['Account enabled', 'Keycloak (read-only check)', 'advisor_user.active'],
+        ['Mail recipients', 'Derived from advisor_user', '—'],
+    ],
+    widths=[4.6, 6.0, 5.8])
+
+g.callout('info', 'Why roles are not Keycloak groups.',
+          'Putting them there would require the service account to hold manage-users on '
+          'the AIOT realm — a credential on this host able to reset passwords and rewrite '
+          'group membership for every other application sharing that realm. The reconcile '
+          'job needs view-users and nothing more. The trade is that access to this service '
+          'is not visible in Keycloak\'s group view, so offboarding means checking two '
+          'systems; the nightly job in 22A.6 closes that gap on a 24-hour lag.')
+
+g.callout('crit', 'advisor_user is also the mail directory.',
+          'delivery.dispatch reads it for leads_for() and _agent_directory(). An account '
+          'removed from it stops receiving the digest and risk alerts — that is the '
+          'intended offboarding mechanism, and it is why rows are deactivated rather than '
+          'deleted. recommendation_feedback.user_name references these people indefinitely '
+          'and the accuracy metrics are computed from that history.')
+
+g.h2('22A.2 Keycloak objects to create')
+
+g.p('One client and one theme. Nothing else.')
+
+g.table(
+    ['Setting', 'Value'],
+    [
+        ['Client ID', 'ata-web'],
+        ['Client authentication', 'On (confidential)'],
+        ['Standard flow', 'On'],
+        ['Direct access grants', 'Off — no password grant'],
+        ['Implicit flow', 'Off'],
+        ['Service accounts', 'Off'],
+        ['Valid redirect URIs', 'https://<host>/oidc/callback  (one literal path, no wildcard)'],
+        ['Valid post logout URIs', 'https://<host>/login'],
+        ['Web origins', '+'],
+        ['PKCE challenge method', 'S256'],
+        ['Login theme', 'ata-login'],
+    ],
+    widths=[5.0, 11.4])
+
+g.callout('warn', 'The redirect URI is the browser-facing URL.',
+          'If nginx fronts the service, it is the nginx URL — not :8444. Keycloak matches '
+          'it exactly and a mismatch returns invalid_redirect_uri with no further detail. '
+          'Never use a wildcard: https://host/* is an open-redirect primitive. '
+          '"python3 run.py doctor" checks that this host matches web.base_url.')
+
+g.p('One non-default protocol mapper: a User Attribute mapper exposing Entra\'s oid as an '
+    'oid claim on the ID token. email and name come from the built-in profile and email '
+    'scopes — confirm email is actually populated, because an account without one signs in '
+    'perfectly and then silently never receives a digest.')
+
+g.h3('Login theme')
+g.code("""/opt/keycloak/themes/ata-login/login/
+├── theme.properties          parent=keycloak
+├── resources/css/login.css
+└── messages/messages_en.properties""")
+g.p('Set per client, not realm-wide — realm-wide would re-skin every other application\'s '
+    'login too. Keep parent=keycloak and override CSS and wording only; forking login.ftl '
+    'means inheriting every future Keycloak security fix by hand. In production add '
+    '--spi-theme-static-max-age=2592000 --spi-theme-cache-themes=true.')
+
+g.h2('22A.3 Vault entries')
+g.table(
+    ['Path', 'Key', 'Needed for'],
+    [
+        ['sd_advisor_web', 'oidc_client_secret', 'The token exchange. Required for SSO.'],
+        ['sd_advisor_web', 'reconcile_client_secret', 'The nightly job. Only if reconcile is enabled.'],
+    ],
+    widths=[4.4, 5.4, 6.6])
+
+g.h2('22A.4 Configuration')
+g.code("""vault kv put secret/sd_advisor_web \\
+    secret_key="$(cat config/.session_secret)" \\
+    oidc_client_secret='<from Keycloak: Clients > ata-web > Credentials>'
+
+# then in config/conf.json
+"auth": {
+  "mode": "both",
+  "oidc": {
+    "issuer": "https://keycloak.kohlerco.com/realms/AIOT",
+    "client_id": "ata-web",
+    "redirect_uri": "https://uswix865.kohlerco.com/oidc/callback",
+    "verify_tls": true,
+    "ca_bundle": "/etc/pki/tls/certs/kohler-internal-ca.pem",
+    "default_role": "VIEWER",
+    "default_viewer_groups": []
+  }
+}""")
+
+g.callout('crit', 'An internal CA will fail the token exchange.',
+          'Exactly as it did against ServiceNow. The fix is adding the issuing CA to '
+          'auth.oidc.ca_bundle. Do not set verify_tls false to work around it — that '
+          'request carries the client secret and the authorization code, and over an '
+          'unverified channel the whole flow is forgeable.')
+
+g.h2('22A.5 How a person gets a role')
+
+g.numbered('First sign-in creates a VIEWER account automatically, scoped to '
+           'auth.oidc.default_viewer_groups.')
+g.numbered('From their profile page they request Lead access, giving a justification and '
+           'choosing the queues they need.')
+g.numbered('Every active administrator is emailed, and a badge appears in the navigation.')
+g.numbered('One administrator opens the request, adjusts the queues if needed, and '
+           'approves or declines.')
+g.numbered('The change applies on that person\'s next click. No re-login.')
+
+g.callout('warn', 'default_viewer_groups is readable by anyone in the realm.',
+          'Any Entra account that can reach Keycloak can obtain a VIEWER account here. '
+          'Whatever is in that list is what they can read — incident descriptions and '
+          'caller names included. The code default is [] (the board renders with a banner '
+          'explaining there is no scope yet), and setting it is meant to be a deliberate '
+          'decision at deploy time rather than one inherited from a sample file.')
+
+g.p('A VIEWER receives no email at all — leads_for() selects on role IN (ADMIN, LEAD) — '
+    'so auto-provisioning cannot accidentally add anyone to the digest.')
+
+g.h3('Why the email buttons are links, not actions')
+g.callout('crit', 'Never make the approve link act on GET.',
+          'Microsoft Defender for Office 365 Safe Links fetches URLs found in email in '
+          'order to scan them, and so do most mail security gateways. A link that granted '
+          'the role on GET would approve every request within seconds of sending, before '
+          'any human saw it, attributed to nobody. The link in the notification renders a '
+          'page; the grant is a POST from an authenticated administrator\'s session. That '
+          'also means a forwarded email confers nothing, and the audit row records which '
+          'administrator actually decided.')
+
+g.p('Decisions are guarded in SQL with AND status = \'PENDING\', so two administrators '
+    'clicking at the same moment — which is ordinary, they all get the same email — '
+    'results in one grant and a clear "already approved by X" for the second.')
+
+g.h3('Granting ADMIN, and the first administrator')
+g.code("""python3 run.py grant --username jane.doe --role ADMIN
+python3 run.py grant --username asha.rao --role LEAD --groups "Service Desk\"""")
+g.p('ADMIN is deliberately absent from auth.role_requests.allowed_targets: it can change '
+    'the scoring weights and trigger live mail to the whole lead group, so it is granted '
+    'directly by someone who already holds it. Group names are validated against the real '
+    'ServiceNow groups — a near-miss errors nowhere downstream, it simply matches no '
+    'tickets and shows an empty board.')
+
+g.h2('22A.6 Offboarding')
+
+g.p('A leaver disabled in Entra can no longer sign in, but their row here stays active and '
+    'they keep receiving the digest and every risk alert indefinitely. The nightly job '
+    'closes that.')
+
+g.code("""python3 run.py sync-users --dry-run     # prints the diff, changes nothing
+python3 run.py sync-users               # applies it""")
+
+g.p('Enable auth.reconcile.enabled and it also runs at 06:00 Europe/London — ahead of the '
+    '07:30 digest, so a deactivated account\'s last digest was yesterday\'s. The service '
+    'account needs realm-management → view-users and nothing else.')
+
+g.table(
+    ['Guard', 'Behaviour', 'What it prevents'],
+    [
+        ['Local accounts untouched',
+         'auth_source=LOCAL is never checked or deactivated',
+         'Removing the break-glass administrator, which is deliberately unknown to Keycloak'],
+        ['Proportional ceiling',
+         'A run that would deactivate more than max_deactivate_pct changes nothing',
+         'An expired service-account secret or an outage reading as "everyone left" and '
+         'silencing the digest for the whole desk'],
+        ['Admin floor',
+         'The last active ADMIN is never deactivated',
+         'A lockout with no UI path back'],
+        ['Lookup errors excluded',
+         'A failed lookup is logged and counted, never treated as departure',
+         'A transient network fault deactivating a working account'],
+    ],
+    widths=[3.8, 5.8, 6.8])
+
+g.callout('info', 'Never hard-delete an account.',
+          'Deactivate. recommendation_feedback.user_name and suppression.created_by '
+          'reference these people, and the accuracy page is computed from that history.')
+
+g.h2('22A.7 Rollout sequence')
+
+g.table(
+    ['Phase', 'Action', 'Reversal'],
+    [
+        ['1', 'Apply migration 003. auth.mode stays "local". No behaviour change.',
+         'Revert the migration'],
+        ['2', 'Exercise the role request workflow on local accounts. Needs no Keycloak.',
+         'auth.role_requests.enabled false'],
+        ['3', 'Create ata-web and the theme. Put nginx and TLS in front.',
+         'Delete the client'],
+        ['4', 'auth.mode "both". You alone sign in via SSO and verify.', 'auth.mode "local"'],
+        ['5', 'Two or three leads pilot SSO; their local accounts stay.',
+         'They use the password form'],
+        ['6', 'auth.local_login.allow_roles ["ADMIN"]. Null out non-admin hashes.',
+         'Re-enable local login'],
+        ['7', 'auth.mode "oidc", reconcile enabled.', 'Config flip and restart'],
+    ],
+    widths=[1.5, 8.9, 6.0])
+
+g.callout('warn', 'Run phases 4 and 5 with shadow_mode on.',
+          'You will be creating, deactivating and re-activating accounts, and leads_for() '
+          'reads that table directly — one mistake becomes real mail to a real distribution '
+          'list. runtime.shadow_mode_exempt keeps the access-request notifications flowing '
+          'while the bulk digests stay suppressed, so the workflow is still testable.')
+
+g.h3('Keep one local administrator')
+g.p('If Keycloak is unreachable the service keeps running — the scheduler is in-process, '
+    'the stream tier keeps firing every ten minutes and risk alerts keep going out — but '
+    'without a local account nobody can sign in to snooze a ticket or stop a digest. The '
+    'automation stays live while the controls go dark. auth.local_login.allow_roles '
+    '["ADMIN"] restricts the password form to that one account; its use is logged at '
+    'WARNING. It is a password that bypasses SSO and it will be raised in any review — the '
+    'alternative is being unable to intervene during an outage.')
+
+g.h2('22A.8 Verification')
+g.code("""python3 run.py doctor      # oidc issuer, oidc redirect, keycloak admin,
+                           # admin floor, access requests
+
+# Then, in a browser:
+#  1. /login shows the SSO button
+#  2. Sign in -> lands on /board as VIEWER with the no-scope banner
+#  3. /profile -> request Lead access -> the admin badge appears
+#  4. Approve from a second account -> the role applies without re-login
+#  5. Sign out -> signing in again PROMPTS. If it does not, the Keycloak
+#     session outlived the local one and end_session_endpoint is not working.""")
+
+g.h2('22A.9 Troubleshooting')
+g.table(
+    ['Symptom', 'Cause', 'Fix'],
+    [
+        ['invalid_redirect_uri', 'Keycloak matches exactly; nginx changed the host or scheme',
+         'Make the client\'s redirect URI identical to auth.oidc.redirect_uri'],
+        ['CERTIFICATE_VERIFY_FAILED on the token exchange', 'Internal CA not trusted',
+         'Add it to auth.oidc.ca_bundle — never disable verification'],
+        ['"Sign-in could not be completed"', 'State, nonce, audience or signature check failed',
+         'logs/advisor.log names which one; each is a deliberate refusal'],
+        ['Signing in again never prompts', 'Keycloak session outlived the local one',
+         'The issuer must advertise end_session_endpoint; doctor reports if it does not'],
+        ['Everyone lands on "Access not provisioned"', 'jit_provisioning is false',
+         'Enable it, or create the accounts with run.py adduser'],
+        ['Access requests pile up undecided', 'Notification suppressed or no admin address',
+         'Check runtime.shadow_mode_exempt includes role_request, and that an active '
+         'ADMIN has an email. doctor fails this after 7 days.'],
+        ['sync-users exits 2', 'The proportional ceiling tripped — nothing was changed',
+         'Check the service-account secret and the realm name before rerunning'],
+    ],
+    widths=[4.6, 5.2, 6.6])
 
 
 # ========================================================== SECTION 23 =====

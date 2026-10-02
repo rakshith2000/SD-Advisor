@@ -12,6 +12,16 @@ itsdangerous==2.2.0
 # probe breaks against bcrypt >= 4.1 with a misleading 72-byte error.
 bcrypt>=4.1,<6
 
+# --- Single sign-on (Keycloak / OIDC) ---
+# PyJWT + requests rather than an OIDC framework. The flow is three HTTP calls
+# and one signature check, and doing it directly keeps CA bundle handling the
+# same as everywhere else here - an internal CA otherwise fails the token
+# exchange exactly as it did against ServiceNow.
+# cryptography is what PyJWT verifies RS256 with; pinned explicitly because it
+# is a direct requirement, not an incidental transitive one.
+PyJWT>=2.8,<3
+cryptography>=42,<46
+
 # --- Scheduling ---
 APScheduler==3.11.0
 

@@ -272,19 +272,86 @@ CREATE TABLE IF NOT EXISTS resolution_stat (
 -- ---------------------------------------------------------------------------
 -- UI users
 -- ---------------------------------------------------------------------------
+-- Authentication may come from Keycloak; authorisation never does. The three
+-- roles live here and Keycloak is not told they exist, which is what keeps its
+-- service account read-only on a realm shared with other applications.
+--
+-- This table is also the mail recipient directory - delivery.dispatch reads it
+-- for leads_for() and _agent_directory(). An account removed from here stops
+-- receiving the digest and risk alerts, which is the intended offboarding
+-- mechanism, and also the reason rows are deactivated rather than deleted.
 CREATE TABLE IF NOT EXISTS advisor_user (
     id                BIGINT       NOT NULL AUTO_INCREMENT,
     username          VARCHAR(100) NOT NULL,
+    -- The Entra object ID. The real identity key: usernames change, and a JIT
+    -- upsert keyed on one would orphan that person's feedback history.
+    external_id       VARCHAR(100) NULL,
     full_name         VARCHAR(150) NULL,
     email             VARCHAR(200) NULL,
-    password_hash     VARCHAR(255) NOT NULL,
+    -- NULL for SSO accounts, which have no password here.
+    password_hash     VARCHAR(255) NULL,
     role              ENUM('ADMIN','LEAD','VIEWER') NOT NULL DEFAULT 'LEAD',
+    auth_source       ENUM('LOCAL','OIDC') NOT NULL DEFAULT 'LOCAL',
+    role_source       ENUM('MANUAL','REQUEST','RECONCILE') NOT NULL DEFAULT 'MANUAL',
     assignment_groups TEXT         NULL,
     active            TINYINT(1)   NOT NULL DEFAULT 1,
+    role_changed_at   DATETIME     NULL,
     last_login_at     DATETIME     NULL,
+    last_seen_idp_at  DATETIME     NULL,
     created_at        DATETIME     NOT NULL,
     PRIMARY KEY (id),
-    UNIQUE KEY uq_user (username)
+    UNIQUE KEY uq_user (username),
+    UNIQUE KEY uq_external (external_id)
+) ENGINE=InnoDB;
+
+
+-- ---------------------------------------------------------------------------
+-- Self-service role elevation
+--
+-- A VIEWER asks for LEAD, every administrator is emailed, one of them decides.
+-- Rows are never deleted: this table is the access audit trail, and
+-- recommendation_feedback.user_name references these people indefinitely.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS role_request (
+    id               BIGINT       NOT NULL AUTO_INCREMENT,
+
+    -- Denormalised deliberately: the decision page is read long after the
+    -- fact and must show the request as it stood, not as the user reads today.
+    username         VARCHAR(100) NOT NULL,
+    external_id      VARCHAR(100) NULL,
+    full_name        VARCHAR(150) NULL,
+    email            VARCHAR(200) NULL,
+
+    from_role        ENUM('ADMIN','LEAD','VIEWER') NOT NULL,
+    to_role          ENUM('ADMIN','LEAD','VIEWER') NOT NULL,
+    justification    TEXT         NOT NULL,
+
+    -- What was asked for, and what was actually allowed - which may be
+    -- narrower. Keeping both is what makes approval an auditable decision.
+    requested_groups TEXT         NULL,
+    granted_groups   TEXT         NULL,
+
+    status           ENUM('PENDING','APPROVED','REJECTED','EXPIRED','CANCELLED')
+                                  NOT NULL DEFAULT 'PENDING',
+    decided_by       VARCHAR(100) NULL,
+    decided_at       DATETIME     NULL,
+    decision_note    TEXT         NULL,
+    notified_at      DATETIME     NULL,
+    expires_at       DATETIME     NOT NULL,
+    created_at       DATETIME     NOT NULL,
+
+    -- One open request per user per target role, enforced by the schema.
+    -- NULL for anything not PENDING, and MySQL does not collide NULLs in a
+    -- unique index - so open requests are constrained and history is not.
+    -- A check-then-insert in Python would let two concurrent submissions
+    -- both pass and both insert.
+    pending_key      VARCHAR(160) GENERATED ALWAYS AS
+                     (IF(status = 'PENDING', CONCAT(username, ':', to_role), NULL)) STORED,
+
+    PRIMARY KEY (id),
+    UNIQUE KEY uq_pending (pending_key),
+    KEY idx_status (status, created_at),
+    KEY idx_user (username, created_at)
 ) ENGINE=InnoDB;
 
 

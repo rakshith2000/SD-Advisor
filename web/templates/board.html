@@ -19,6 +19,18 @@
   </p>
 </div>
 
+{% if no_scope %}
+<div class="banner">
+  <div>
+    <strong>No assignment groups are in scope for your account.</strong>
+    Your sign-in worked; there is simply nothing allocated to you yet, which is
+    why the board below is empty rather than broken.
+    <a href="/profile">Request access from your profile</a>, or ask an
+    administrator to set your assignment groups.
+  </div>
+</div>
+{% endif %}
+
 {% if shadow_mode %}
 <div class="banner">
   <div>
@@ -67,7 +79,7 @@
     <label for="group">Group</label>
     <select id="group" name="group">
       <option value="">All in scope</option>
-      {% for g in all_groups %}
+      {% for g in visible_groups %}
       <option value="{{ g }}" {{ 'selected' if filters.group == g }}>{{ g }}</option>
       {% endfor %}
     </select>

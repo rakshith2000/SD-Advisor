@@ -1,0 +1,49 @@
+{#
+  Authenticated, but not provisioned here.
+
+  Deliberately not a bare 403 and deliberately not a redirect back to the login
+  page - a loop between a working sign-in and a login screen is the most
+  confusing outcome available, because the user has done nothing wrong and has
+  no way to tell that.
+#}
+{% extends "base.html" %}
+{% block title %}Access not provisioned &middot; Aged Ticket Advisor{% endblock %}
+
+{% block layout %}
+<div class="login-wrap">
+  <div class="login-card">
+    <h1>Access not provisioned</h1>
+
+    {% if disabled %}
+    <p class="sub">
+      Your sign-in worked, but this account has been deactivated on the Aged
+      Ticket Advisor.
+    </p>
+    {% else %}
+    <p class="sub">
+      Your sign-in worked. This service has no account for you yet.
+    </p>
+    {% endif %}
+
+    <div class="field" style="margin-top:14px;">
+      <table class="data">
+        <tbody>
+          <tr><td>Signed in as</td><td>{{ identity.full_name or identity.username }}</td></tr>
+          <tr><td>Username</td><td>{{ identity.username }}</td></tr>
+          {% if identity.email %}
+          <tr><td>Email</td><td>{{ identity.email }}</td></tr>
+          {% endif %}
+        </tbody>
+      </table>
+    </div>
+
+    <p class="sub">
+      Ask an Aged Ticket Advisor administrator to provision access for this
+      account. Quote the username above &mdash; it is what they will search for.
+    </p>
+
+    <a class="btn" style="width:100%;display:block;text-align:center;margin-top:6px;"
+       href="/logout">Sign out</a>
+  </div>
+</div>
+{% endblock %}

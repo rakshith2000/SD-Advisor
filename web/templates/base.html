@@ -26,12 +26,18 @@
       <a href="/accuracy" class="{{ 'active' if path.startswith('/accuracy') }}">Accuracy</a>
       {% if user.role == 'ADMIN' %}
       <a href="/settings/weights" class="{{ 'active' if path.startswith('/settings') }}">Weights</a>
+      <a href="/admin/role-requests" class="{{ 'active' if path.startswith('/admin/role-requests') }}">
+        Access{% if pending_access_requests %}
+        <span class="chip alert">{{ pending_access_requests }}</span>{% endif %}
+      </a>
       {% endif %}
+      {% if user.role in ('ADMIN', 'LEAD') %}
       <a href="/digest/preview" target="_blank" rel="noopener">Digest preview</a>
+      {% endif %}
     </nav>
     <div class="topbar-meta">
       {% if shadow_mode %}<span title="Nothing is being emailed to the wider team">Shadow mode</span>{% endif %}
-      <span>{{ user.full_name }}</span>
+      <a href="/profile" class="{{ 'active' if path.startswith('/profile') }}">{{ user.full_name }}</a>
       <button class="theme-toggle" type="button" onclick="toggleTheme()"
               title="Switch between light and dark" aria-label="Switch colour theme">&#9681;</button>
       <a href="/logout">Sign out</a>

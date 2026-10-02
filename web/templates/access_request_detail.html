@@ -1,0 +1,146 @@
+{% extends "base.html" %}
+{% block title %}Access request &middot; Aged Ticket Advisor{% endblock %}
+
+{% block content %}
+
+<div class="page-head">
+  <h1>Access request</h1>
+  <p>
+    {{ req.full_name or req.username }} has asked to go from
+    {{ req.from_role|title }} to {{ req.to_role|title }}.
+  </p>
+</div>
+
+{% if error %}<div class="banner"><div><strong>{{ error }}</strong></div></div>{% endif %}
+
+{% if not req.is_open %}
+<div class="banner">
+  <div>
+    <strong>Already {{ req.status|lower }}</strong>
+    {%- if req.decided_by %} by {{ req.decided_by }}{% endif %}
+    {%- if req.decided_at %} on {{ req.decided_at.strftime('%d %b %Y at %H:%M') }} UTC{% endif %}.
+    Nothing further to do here.
+  </div>
+</div>
+{% endif %}
+
+<div class="card">
+  <div class="card-head"><h2>The request</h2></div>
+  <div class="card-body">
+    <table class="data">
+      <tbody>
+        <tr><td>Who</td><td><strong>{{ req.full_name or req.username }}</strong>
+          <div class="subtle">{{ req.username }}</div></td></tr>
+        <tr><td>Email</td><td>{{ req.email or 'Not set' }}</td></tr>
+        <tr><td>Change</td>
+            <td>{{ req.from_role|title }} &rarr; <strong>{{ req.to_role|title }}</strong></td></tr>
+        <tr><td>Queues requested</td><td>{{ req.requested_groups or 'None specified' }}</td></tr>
+        <tr><td>Raised</td><td class="tnum">{{ req.created_at.strftime('%d %b %Y %H:%M') }} UTC</td></tr>
+        <tr><td>Expires</td><td class="tnum">{{ req.expires_at.strftime('%d %b %Y') }}</td></tr>
+        <tr><td>Their reason</td>
+            <td style="white-space:pre-wrap;">{{ req.justification }}</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{% if prior %}
+<div class="card">
+  <div class="card-head">
+    <h2>Earlier requests from this person</h2>
+    <span class="sub">Context for the decision</span>
+  </div>
+  <div class="card-body flush">
+    <table class="data">
+      <thead><tr><th>Raised</th><th>Requested</th><th>Outcome</th><th>By</th><th>Note</th></tr></thead>
+      <tbody>
+        {% for row in prior %}
+        <tr>
+          <td class="tnum">{{ row.created_at.strftime('%d %b %Y') }}</td>
+          <td class="subtle">{{ row.to_role|title }} &middot; {{ row.requested_groups or '-' }}</td>
+          <td><span class="chip {{ 'alert' if row.status in ('REJECTED', 'EXPIRED') }}">
+            {{ row.status|title }}</span></td>
+          <td class="subtle">{{ row.decided_by or 'automatic' }}</td>
+          <td class="subtle">{{ row.decision_note or '' }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+
+{% if req.is_open and not is_own %}
+
+{#
+  The coupling an administrator would not otherwise see: leads_for() selects on
+  role IN ('ADMIN','LEAD'), so granting Lead also starts delivering the daily
+  digest and every risk alert batch to this address. Those carry incident
+  descriptions and caller names, which makes the queue selection below part of
+  the decision rather than a formality.
+#}
+<div class="card">
+  <div class="card-head">
+    <h2>Decide</h2>
+    <span class="sub">Approving also subscribes them to mail</span>
+  </div>
+  <div class="card-body">
+
+    <div class="banner" style="margin-top:0;">
+      <div>
+        Approving adds <strong>{{ req.email or req.username }}</strong> to the
+        daily lead digest and to risk alerts for the queues you grant below.
+        Those emails contain incident descriptions and caller names.
+      </div>
+    </div>
+
+    <form method="post" action="/admin/role-requests/{{ req.id }}/approve">
+      <div class="field">
+        <label for="groups">Queues to grant</label>
+        <select id="groups" name="groups" multiple size="6">
+          {% for g in all_groups %}
+          <option value="{{ g }}"
+                  {{ 'selected' if g in req.requested_group_list }}>{{ g }}</option>
+          {% endfor %}
+        </select>
+        <div class="subtle">
+          Pre-selected to what they asked for. Narrow it if that is too much
+          &mdash; they are told what was actually granted.
+        </div>
+      </div>
+
+      <div class="field">
+        <label for="note">Note (optional)</label>
+        <textarea id="note" name="note" rows="2"
+                  placeholder="Included in the email they receive."></textarea>
+      </div>
+
+      <button class="btn primary" type="submit">Approve</button>
+    </form>
+
+    <hr style="margin:18px 0;border:0;border-top:1px solid var(--rule);">
+
+    <form method="post" action="/admin/role-requests/{{ req.id }}/reject">
+      <div class="field">
+        <label for="reject_note">Reason for declining</label>
+        <textarea id="reject_note" name="note" rows="2"
+                  placeholder="They will see this. A reason saves a follow-up conversation."></textarea>
+      </div>
+      <button class="btn small" type="submit">Decline</button>
+    </form>
+
+  </div>
+</div>
+
+{% elif is_own %}
+<div class="banner">
+  <div>
+    <strong>This is your own request.</strong>
+    Another administrator has to decide it.
+  </div>
+</div>
+{% endif %}
+
+<p><a href="/admin/role-requests">&larr; All access requests</a></p>
+
+{% endblock %}

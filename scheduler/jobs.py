@@ -100,7 +100,140 @@ class JobRunner:
         except Exception:
             log.exception('Prune failed')
 
+        try:
+            result['expired_access_requests'] = self.expire_access_requests()
+        except Exception:
+            log.exception('Access request expiry failed')
+
         return result
+
+    def reconcile_users(self, dry_run: bool = False) -> Dict[str, Any]:
+        """Deactivate advisor accounts whose identity has gone from Keycloak.
+
+        A leaver disabled in Entra can no longer sign in, but their row here
+        stays active and leads_for() keeps mailing them the digest and every
+        risk alert - incident descriptions and caller names - indefinitely.
+
+        Three guards, all of which exist because the failure mode is silent.
+
+        Local accounts are never touched. One of them is the break-glass
+        administrator, and it is deliberately unknown to Keycloak - a job that
+        deactivated anything it could not find would remove the single
+        credential that still works when Keycloak is the thing that is down.
+
+        A run that would deactivate more than max_deactivate_pct of accounts
+        changes nothing. An expired service-account secret, a renamed realm and
+        a Keycloak outage all present as "no user found", repeatedly; an
+        unguarded loop reads that as everyone having left and silences the
+        digest for the whole desk.
+
+        The last active administrator is never deactivated. Nothing in the UI
+        can restore one, so that would leave the service with no way back in
+        short of the CLI.
+        """
+        from core.keycloak import KeycloakAdmin, KeycloakError
+
+        result: Dict[str, Any] = {'checked': 0, 'deactivated': 0, 'missing': [],
+                                  'errors': 0, 'dry_run': dry_run}
+
+        if not self.ctx.settings.get('auth.reconcile.enabled', False):
+            result['skipped'] = 'auth.reconcile.enabled is false'
+            return result
+
+        admin = KeycloakAdmin(self.ctx.settings, self.ctx.vault)
+
+        accounts = self.ctx.db.retrieve('advisor_user', conditions=[
+            {'col': 'active', 'op': 'eq', 'val': 1},
+            {'col': 'auth_source', 'op': 'eq', 'val': 'OIDC'},
+        ], order_by='username')
+        result['checked'] = len(accounts)
+
+        if not accounts:
+            return result
+
+        gone: List[Dict[str, Any]] = []
+        for account in accounts:
+            try:
+                found = (admin.find_by_external_id(account['external_id'])
+                         if account.get('external_id')
+                         else admin.find_user(account['username']))
+            except KeycloakError:
+                # One lookup failing is not evidence that the person has left.
+                # Counted, logged, and excluded from the deactivation set.
+                log.exception('Could not check %s against Keycloak', account['username'])
+                result['errors'] += 1
+                continue
+
+            if found and admin.is_active(found):
+                self.ctx.db.update(
+                    'advisor_user', {'last_seen_idp_at': utc_now()},
+                    conditions=[{'col': 'id', 'op': 'eq', 'val': account['id']}])
+            else:
+                gone.append(account)
+
+        result['missing'] = [a['username'] for a in gone]
+
+        if not gone:
+            return result
+
+        ceiling = float(self.ctx.settings.get('auth.reconcile.max_deactivate_pct', 30))
+        proportion = 100.0 * len(gone) / len(accounts)
+        if proportion > ceiling:
+            log.error(
+                'Refusing to reconcile: %d of %d accounts (%.0f%%) appear to have gone '
+                'from Keycloak, above the %.0f%% ceiling. That pattern is far more often '
+                'an expired service-account secret, a renamed realm or an outage than '
+                'a genuine departure. Nothing has been changed. Investigate, then '
+                'rerun - or raise auth.reconcile.max_deactivate_pct if this really is '
+                'a mass offboarding.',
+                len(gone), len(accounts), proportion, ceiling)
+            result['refused'] = True
+            return result
+
+        admins = {a['username'] for a in self.ctx.db.retrieve('advisor_user', conditions=[
+            {'col': 'active', 'op': 'eq', 'val': 1},
+            {'col': 'role', 'op': 'eq', 'val': 'ADMIN'},
+        ])}
+
+        for account in gone:
+            if account['role'] == 'ADMIN' and len(admins) <= 1:
+                log.error('%s is gone from Keycloak but is the only active administrator. '
+                          'Leaving it enabled - promote another account first.',
+                          account['username'])
+                result['errors'] += 1
+                continue
+
+            if dry_run:
+                log.info('[dry run] would deactivate %s (%s)',
+                         account['username'], account['role'])
+            else:
+                self.ctx.db.update(
+                    'advisor_user', {'active': 0},
+                    conditions=[{'col': 'id', 'op': 'eq', 'val': account['id']}])
+                log.warning('Deactivated %s - no longer present or enabled in Keycloak. '
+                            'They will stop receiving the digest and risk alerts.',
+                            account['username'])
+            admins.discard(account['username'])
+            result['deactivated'] += 1
+
+        return result
+
+    def expire_access_requests(self) -> int:
+        """Close out role requests nobody decided.
+
+        Imported locally: web.auth pulls in FastAPI, and the CLI entry points
+        that run this job have no reason to load a web framework.
+
+        Without the sweep the administrators' badge accumulates requests from
+        people who have since moved on, and the one signal that the workflow is
+        being ignored disappears into a standing count that nobody reads.
+        """
+        from web.access import RoleRequestService
+        from web.auth import UserStore
+
+        service = RoleRequestService(self.ctx.db, UserStore(self.ctx.db),
+                                     self.ctx.settings)
+        return service.expire_stale()
 
     def prune(self, retain_days: int = 180) -> Dict[str, int]:
         """Keep the signal history useful without letting it grow unbounded.
@@ -158,5 +291,16 @@ def build_scheduler(context) -> BackgroundScheduler:
     scheduler.add_job(runner.nightly_maintenance,
                       CronTrigger.from_crontab(maintenance_cron, timezone='UTC'),
                       id='maintenance', name='Nightly index and baseline refresh')
+
+    if settings.get('auth.reconcile.enabled', False):
+        # Deliberately ahead of the digest. An account deactivated here must
+        # stop receiving mail on the same morning, not the next one - the whole
+        # point is that a leaver's last digest was yesterday's.
+        reconcile_cron = settings.get('auth.reconcile.cron', '0 6 * * *')
+        scheduler.add_job(
+            runner.reconcile_users,
+            CronTrigger.from_crontab(reconcile_cron, timezone='Europe/London'),
+            id='reconcile', name='Reconcile accounts against Keycloak')
+        log.info('Account reconciliation scheduled (%s Europe/London)', reconcile_cron)
 
     return scheduler

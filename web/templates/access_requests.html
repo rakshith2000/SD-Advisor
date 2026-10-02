@@ -1,0 +1,90 @@
+{% extends "base.html" %}
+{% block title %}Access requests &middot; Aged Ticket Advisor{% endblock %}
+
+{% block content %}
+
+<div class="page-head">
+  <h1>Access requests</h1>
+  <p>
+    Every administrator sees the same list and is emailed the same request.
+    Only one of you needs to act &mdash; whoever decides first wins, and the
+    rest see who it was.
+  </p>
+</div>
+
+<div class="card">
+  <div class="card-head">
+    <h2>{{ pending|length }} awaiting a decision</h2>
+    <span class="sub">Oldest first</span>
+  </div>
+  <div class="card-body flush">
+    {% if not pending %}
+    <div class="empty">Nothing waiting.</div>
+    {% else %}
+    <table class="data">
+      <thead>
+        <tr>
+          <th>Raised</th>
+          <th>Who</th>
+          <th>Change</th>
+          <th>Queues requested</th>
+          <th>Expires</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in pending %}
+        <tr>
+          <td class="tnum">{{ row.created_at.strftime('%d %b %H:%M') }}</td>
+          <td>
+            <strong>{{ row.full_name or row.username }}</strong>
+            <div class="subtle">{{ row.email or row.username }}</div>
+          </td>
+          <td>{{ row.from_role|title }} &rarr; <strong>{{ row.to_role|title }}</strong></td>
+          <td class="subtle">{{ row.requested_groups or '-' }}</td>
+          <td class="tnum subtle">{{ row.expires_at.strftime('%d %b') }}</td>
+          <td>
+            <a class="btn small" href="/admin/role-requests/{{ row.id }}">Review</a>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+  </div>
+</div>
+
+{% if recent %}
+<div class="card">
+  <div class="card-head">
+    <h2>Recently decided</h2>
+    <span class="sub">Last 25 &middot; never deleted, this is the access audit trail</span>
+  </div>
+  <div class="card-body flush">
+    <table class="data">
+      <thead>
+        <tr><th>Decided</th><th>Who</th><th>Change</th><th>Outcome</th><th>By</th><th>Note</th></tr>
+      </thead>
+      <tbody>
+        {% for row in recent %}
+        <tr>
+          <td class="tnum">
+            {{ row.decided_at.strftime('%d %b %Y') if row.decided_at else '-' }}
+          </td>
+          <td>{{ row.full_name or row.username }}</td>
+          <td class="subtle">{{ row.from_role|title }} &rarr; {{ row.to_role|title }}</td>
+          <td>
+            <span class="chip {{ 'alert' if row.status in ('REJECTED', 'EXPIRED') }}">
+              {{ row.status|title }}</span>
+          </td>
+          <td class="subtle">{{ row.decided_by or 'automatic' }}</td>
+          <td class="subtle">{{ (row.decision_note or '')|truncate(60, true, '...') }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+
+{% endblock %}

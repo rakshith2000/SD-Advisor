@@ -11,6 +11,7 @@ import json
 import secrets
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+from urllib.parse import quote
 
 from fastapi import BackgroundTasks, Depends, FastAPI, Form, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
@@ -26,7 +27,11 @@ from delivery.dispatch import Dispatcher
 from pipeline.orchestrator import Orchestrator
 from pipeline.scoring import DEFAULT_WEIGHTS
 from web import auth
-from web.auth import SessionManager, UserStore, require_admin, require_user, require_write
+from web.access import (ALREADY_DECIDED, NOT_FOUND, REFUSED,
+                        AccessRequestError, RoleRequestService)
+from web.auth import (SessionManager, UserStore, require_admin, require_lead,
+                      require_user, require_write, safe_next)
+from web.oidc import ID_TOKEN_COOKIE, STATE_COOKIE, OIDCError, OIDCProvider
 
 log = get_logger('web.app')
 
@@ -66,13 +71,37 @@ def create_app(config_path: Optional[str] = None) -> FastAPI:
     app = FastAPI(title='Aged Ticket Advisor', docs_url='/api/docs',
                   openapi_url='/api/openapi.json')
 
-    sessions = SessionManager(ctx.settings, _session_secret(ctx))
-    auth.configure(sessions)
+    secret = _session_secret(ctx)
+    sessions = SessionManager(ctx.settings, secret)
     users = UserStore(ctx.db)
+
+    mode = str(ctx.settings.get('auth.mode', 'local')).strip().lower()
+    oidc_enabled = mode in ('oidc', 'both')
+    local_enabled = (mode in ('local', 'both')
+                     and bool(ctx.settings.get('auth.local_login.enabled', True)))
+    local_roles = {r.upper() for r in
+                   ctx.settings.get('auth.local_login.allow_roles',
+                                    ['ADMIN', 'LEAD', 'VIEWER'])}
+
+    provider: Optional[OIDCProvider] = None
+    if oidc_enabled:
+        # Constructed eagerly so a misconfigured issuer is a startup failure
+        # rather than a 500 on the first person who tries to sign in.
+        provider = OIDCProvider(ctx.settings, ctx.vault, secret)
+        log.info('Single sign-on enabled against %s (client %s)',
+                 provider.issuer, provider.client_id)
+    if not local_enabled and not oidc_enabled:
+        raise RuntimeError(
+            'auth.mode leaves no way to sign in. Set it to local, oidc or both.')
+    # Passing the store in is what lets require_user reconcile each request
+    # against the stored account, so a granted or revoked role applies on the
+    # next click rather than at the next sign-in.
+    auth.configure(sessions, users)
 
     builder = DigestBuilder(ctx)
     orchestrator = Orchestrator(ctx)
     dispatcher = Dispatcher(ctx)
+    access = RoleRequestService(ctx.db, users, ctx.settings)
 
     STATIC_DIR.mkdir(parents=True, exist_ok=True)
     app.mount('/static', StaticFiles(directory=str(STATIC_DIR)), name='static')
@@ -90,7 +119,54 @@ def create_app(config_path: Optional[str] = None) -> FastAPI:
     def render(request: Request, template: str, **context) -> HTMLResponse:
         context.setdefault('user', auth.current_user(request))
         context.setdefault('now', utc_now())
+
+        # The badge is the reason an access request cannot be lost. Shadow mode
+        # suppresses most outbound mail, and an administrator may simply not
+        # read the notification, so the UI carries the count on every page
+        # rather than relying on the email having arrived.
+        user = context.get('user') or {}
+        if user.get('role') == 'ADMIN' and 'pending_access_requests' not in context:
+            try:
+                context['pending_access_requests'] = access.pending_count()
+            except Exception:
+                # A counter is not worth failing a page render over.
+                log.debug('Could not count pending access requests')
+                context['pending_access_requests'] = 0
+
         return templates.TemplateResponse(request, template, context)
+
+    # -----------------------------------------------------------------
+    # scope
+    # -----------------------------------------------------------------
+
+    def scope_of(user: Dict[str, Any]) -> List[str]:
+        return users.visible_groups(user, ctx.known_assignment_groups())
+
+    def narrow_scope(user: Dict[str, Any], group: Optional[str]) -> List[str]:
+        """The groups to query, optionally narrowed to one the caller asked for.
+
+        An out-of-scope `group` yields an empty list rather than being ignored.
+        Ignoring it would silently widen the result to the user's whole scope,
+        which reads as success and is the wrong direction to fail in.
+        """
+        visible = scope_of(user)
+        if not group:
+            return visible
+        return [group] if users.can_see_group(user, group) else []
+
+    def fetch_in_scope(user: Dict[str, Any], number: str) -> Dict[str, Any]:
+        """A board row the caller is entitled to, or 404.
+
+        404 rather than 403 throughout: 403 on an out-of-scope ticket confirms
+        the incident exists and is being tracked, which is precisely the fact a
+        scoped account should not be able to probe for.
+        """
+        row = ctx.db.query_one(
+            'SELECT * FROM v_current_board WHERE incident_number = %s', (number,))
+        if not row or not users.can_see_group(user, row.get('assignment_group')):
+            raise HTTPException(status_code=404,
+                                detail=f'{number} is not on the board')
+        return row
 
     # -----------------------------------------------------------------
     # auth
@@ -98,26 +174,264 @@ def create_app(config_path: Optional[str] = None) -> FastAPI:
 
     @app.get('/login', response_class=HTMLResponse)
     def login_form(request: Request, next: str = '/board', error: str = ''):
-        return render(request, 'login.html', next=next, error=error, user=None)
+        # Sanitised on the way in as well as on the way out, so the hidden
+        # field in the form cannot carry an off-site value forward.
+        return render(request, 'login.html', next=safe_next(next), error=error,
+                      user=None, sso_enabled=oidc_enabled,
+                      local_enabled=local_enabled,
+                      local_note=('Administrator access only'
+                                  if local_enabled and local_roles == {'ADMIN'} else ''))
 
     @app.post('/login')
     def login_submit(request: Request, username: str = Form(...),
                      password: str = Form(...), next: str = Form('/board')):
+        destination = safe_next(next)
+
+        if not local_enabled:
+            raise HTTPException(status_code=404, detail='Password sign-in is not available')
+
         user = users.authenticate(username, password)
         if not user:
             log.info('Failed login attempt for %r', username[:40])
-            return RedirectResponse(f'/login?error=Invalid+credentials&next={next}',
-                                    status_code=303)
+            return RedirectResponse(
+                f'/login?error=Invalid+credentials&next={quote(destination, safe="/")}',
+                status_code=303)
 
-        response = RedirectResponse(next or '/board', status_code=303)
+        # Enforced here rather than only in the template. Restricting the form
+        # to administrators is the break-glass arrangement; a lead whose
+        # password still works would otherwise bypass single sign-on entirely
+        # by posting to this endpoint directly.
+        if user['role'] not in local_roles:
+            log.warning('Password sign-in refused for %r: role %s is not in '
+                        'auth.local_login.allow_roles', user['username'], user['role'])
+            return RedirectResponse(
+                '/login?error=Please+sign+in+with+single+sign-on', status_code=303)
+
+        response = RedirectResponse(destination, status_code=303)
         sessions.issue(response, user)
         return response
 
-    @app.get('/logout')
-    def logout():
-        response = RedirectResponse('/login', status_code=303)
-        sessions.clear(response)
+    # -- single sign-on ----------------------------------------------------
+
+    @app.get('/oidc/login')
+    def oidc_login(next: str = '/board'):
+        if provider is None:
+            raise HTTPException(status_code=404, detail='Single sign-on is not configured')
+
+        try:
+            url, state = provider.authorization_url(safe_next(next))
+        except OIDCError as exc:
+            log.error('Could not start single sign-on: %s', exc)
+            return RedirectResponse(
+                '/login?error=Single+sign-on+is+unavailable', status_code=303)
+
+        response = RedirectResponse(url, status_code=303)
+        # Short-lived and signed. There is no server-side session store, so
+        # this cookie is the only thing tying the callback to a login this
+        # service actually started.
+        response.set_cookie(STATE_COOKIE, state, max_age=300, httponly=True,
+                            samesite='lax', secure=sessions.secure, path='/oidc')
         return response
+
+    @app.get('/oidc/callback')
+    def oidc_callback(request: Request, code: str = '', state: str = '',
+                      error: str = '', error_description: str = ''):
+        if provider is None:
+            raise HTTPException(status_code=404, detail='Single sign-on is not configured')
+
+        if error:
+            # Keycloak declined before we ever saw a code - access_denied when
+            # the user cancels, and so on.
+            log.info('Single sign-on returned %s: %s', error, error_description[:200])
+            return RedirectResponse(
+                f'/login?error={quote(error_description or error)}', status_code=303)
+
+        try:
+            result = provider.exchange(code, state, request.cookies.get(STATE_COOKIE))
+            identity = provider.identity(result['claims'])
+        except OIDCError as exc:
+            log.warning('Single sign-on callback rejected: %s', exc)
+            return RedirectResponse(
+                '/login?error=Sign-in+could+not+be+completed', status_code=303)
+
+        if not bool(ctx.settings.get('auth.oidc.jit_provisioning', True)):
+            account = users.live(identity['username'])
+            if not account:
+                log.info('Refused an unprovisioned account: %s', identity['username'])
+                return render(request, 'no_access.html', identity=identity, user=None)
+        else:
+            account = users.jit_upsert(
+                identity,
+                default_role=str(ctx.settings.get('auth.oidc.default_role', 'VIEWER')),
+                default_groups=list(ctx.settings.get('auth.oidc.default_viewer_groups', [])))
+
+        if not account or not account.get('active'):
+            log.info('Single sign-on succeeded for a disabled account: %s',
+                     identity['username'])
+            return render(request, 'no_access.html', identity=identity, user=None,
+                          disabled=True)
+
+        response = RedirectResponse(safe_next(result.get('next')), status_code=303)
+        sessions.issue(response, account, expires_at=identity.get('expires_at'))
+
+        # Path-scoped to /logout so a 1-2 KB token is not attached to every
+        # request including static assets. Kept only so logout can be silent -
+        # without id_token_hint Keycloak shows a confirmation screen.
+        response.set_cookie(ID_TOKEN_COOKIE, result['id_token'],
+                            max_age=sessions.max_age, httponly=True,
+                            samesite='lax', secure=sessions.secure, path='/logout')
+        response.delete_cookie(STATE_COOKIE, path='/oidc')
+
+        log.info('%s signed in via single sign-on as %s',
+                 account['username'], account['role'])
+        return response
+
+    @app.get('/logout')
+    def logout(request: Request):
+        """Ends the local session, and the Keycloak one.
+
+        Clearing the cookie alone is not a logout: the Keycloak session
+        survives, so the sign-in button goes straight back in with no prompt
+        and on a shared machine the next person inherits the session.
+        """
+        destination = '/login'
+        if provider is not None:
+            base = str(ctx.settings.get('web.base_url', '')).rstrip('/')
+            destination = provider.logout_url(
+                request.cookies.get(ID_TOKEN_COOKIE), f'{base}/login' if base else '/login')
+
+        response = RedirectResponse(destination, status_code=303)
+        sessions.clear(response)
+        response.delete_cookie(ID_TOKEN_COOKIE, path='/logout')
+        return response
+
+    # -----------------------------------------------------------------
+    # profile and access requests
+    # -----------------------------------------------------------------
+
+    @app.get('/profile', response_class=HTMLResponse)
+    def profile(request: Request, error: str = '', sent: int = 0,
+                user: Dict[str, Any] = Depends(require_user)):
+        account = users.live(user['username']) or {}
+        return render(request, 'profile.html',
+                      account=account,
+                      scope=scope_of(user),
+                      all_groups=ctx.known_assignment_groups(),
+                      open_request=access.open_request_for(user['username']),
+                      history=access.history_for(user['username']),
+                      requestable=access.allowed_targets if access.enabled else [],
+                      min_justification=access.min_justification,
+                      error=error, sent=bool(sent))
+
+    @app.post('/profile/request-role')
+    async def request_role(request: Request,
+                           user: Dict[str, Any] = Depends(require_user)):
+        form = await request.form()
+        try:
+            opened = access.open_request(
+                user={**user, 'email': (users.live(user['username']) or {}).get('email')},
+                to_role=form.get('to_role', 'LEAD'),
+                justification=form.get('justification', ''),
+                requested_groups=form.getlist('groups'),
+                valid_groups=ctx.known_assignment_groups())
+        except AccessRequestError as exc:
+            return RedirectResponse(f'/profile?error={quote(str(exc))}', status_code=303)
+
+        # After the row exists, never before: an administrator following the
+        # link must find the request there. A send failure is logged and leaves
+        # the request standing, visible on the badge.
+        try:
+            dispatcher.send_role_request(opened)
+            access.mark_notified(opened['id'])
+        except Exception:
+            log.exception('Could not notify administrators of access request %s',
+                          opened.get('id'))
+
+        return RedirectResponse('/profile?sent=1', status_code=303)
+
+    @app.post('/profile/request-role/{request_id}/cancel')
+    def cancel_role_request(request_id: int,
+                            user: Dict[str, Any] = Depends(require_user)):
+        access.cancel(request_id, user)
+        return RedirectResponse('/profile', status_code=303)
+
+    @app.get('/admin/role-requests', response_class=HTMLResponse)
+    def role_requests(request: Request, user: Dict[str, Any] = Depends(require_admin)):
+        return render(request, 'access_requests.html',
+                      pending=access.pending(),
+                      recent=ctx.db.retrieve(
+                          'role_request',
+                          conditions=[{'col': 'status', 'op': 'ni',
+                                       'val': ['PENDING']}],
+                          order_by='decided_at DESC', limit=25))
+
+    @app.get('/admin/role-requests/{request_id}', response_class=HTMLResponse)
+    def role_request_detail(request: Request, request_id: int, error: str = '',
+                            user: Dict[str, Any] = Depends(require_admin)):
+        """Renders only. Following this link decides nothing.
+
+        Mail scanners fetch URLs found in email to inspect them, so the link in
+        the notification has to be safe to prefetch. The decision is a POST
+        from this page.
+        """
+        record = access.get(request_id)
+        if not record:
+            raise HTTPException(status_code=404, detail='No such access request')
+
+        return render(request, 'access_request_detail.html',
+                      req=record,
+                      all_groups=ctx.known_assignment_groups(),
+                      prior=[r for r in access.history_for(record['username'], limit=20)
+                             if r['id'] != record['id']],
+                      is_own=record['username'] == user['username'],
+                      error=error)
+
+    @app.post('/admin/role-requests/{request_id}/approve')
+    async def approve_role_request(request: Request, request_id: int,
+                                   user: Dict[str, Any] = Depends(require_admin)):
+        form = await request.form()
+        result = access.approve(
+            request_id, user,
+            granted_groups=form.getlist('groups'),
+            note=form.get('note', ''),
+            valid_groups=ctx.known_assignment_groups())
+        return _after_decision(result, request_id)
+
+    @app.post('/admin/role-requests/{request_id}/reject')
+    async def reject_role_request(request: Request, request_id: int,
+                                  user: Dict[str, Any] = Depends(require_admin)):
+        form = await request.form()
+        result = access.reject(request_id, user, note=form.get('note', ''))
+        return _after_decision(result, request_id)
+
+    def _after_decision(result: Dict[str, Any], request_id: int) -> RedirectResponse:
+        outcome = result.get('outcome')
+
+        if outcome == NOT_FOUND:
+            raise HTTPException(status_code=404, detail='No such access request')
+
+        if outcome == REFUSED:
+            return RedirectResponse(
+                f'/admin/role-requests/{request_id}?error={quote(result["reason"])}',
+                status_code=303)
+
+        if outcome == ALREADY_DECIDED:
+            # Every administrator is emailed at once, so two of them deciding
+            # within seconds is ordinary. Say who got there first rather than
+            # reporting a failure.
+            decided = result.get('request') or {}
+            message = (f'Already {decided.get("status", "decided").lower()} by '
+                       f'{decided.get("decided_by", "another administrator")}.')
+            return RedirectResponse(
+                f'/admin/role-requests/{request_id}?error={quote(message)}',
+                status_code=303)
+
+        try:
+            dispatcher.send_role_decision(result['request'])
+        except Exception:
+            log.exception('Could not email the decision for request %s', request_id)
+
+        return RedirectResponse('/admin/role-requests', status_code=303)
 
     # -----------------------------------------------------------------
     # board
@@ -140,10 +454,14 @@ def create_app(config_path: Optional[str] = None) -> FastAPI:
 
         all_groups = ctx.known_assignment_groups()
         visible = users.visible_groups(user, all_groups)
-        groups = [group] if group else visible
+        groups = narrow_scope(user, group)
 
-        rows = builder.board_rows(assignment_groups=groups or None, agent=agent,
-                                  include_snoozed=show_snoozed, min_score=min_score)
+        # board_rows treats None as "every group", so an empty scope has to
+        # short-circuit here. Passing `groups or None` - the previous shape -
+        # would turn "entitled to nothing" into "entitled to everything".
+        rows = ([] if not groups else
+                builder.board_rows(assignment_groups=groups, agent=agent,
+                                   include_snoozed=show_snoozed, min_score=min_score))
 
         if ball:
             rows = [r for r in rows if r.get('pending_action_owner') == ball]
@@ -158,6 +476,7 @@ def create_app(config_path: Optional[str] = None) -> FastAPI:
         return render(request, 'board.html',
                       rows=rows, summary=summary, movement=movement,
                       all_groups=all_groups, visible_groups=visible,
+                      no_scope=not visible,
                       agents=sorted({r['assigned_to'] for r in rows if r.get('assigned_to')}),
                       filters={'group': group, 'agent': agent, 'ball': ball,
                                'flag': flag, 'action': action,
@@ -170,11 +489,7 @@ def create_app(config_path: Optional[str] = None) -> FastAPI:
     @app.get('/ticket/{number}', response_class=HTMLResponse)
     def ticket_detail(request: Request, number: str,
                       user: Dict[str, Any] = Depends(require_user)):
-        row = ctx.db.query_one(
-            'SELECT * FROM v_current_board WHERE incident_number = %s', (number,))
-        if not row:
-            raise HTTPException(status_code=404, detail=f'{number} is not on the board')
-
+        row = fetch_in_scope(user, number)
         decorated = builder.decorate(row)
 
         signal = ctx.db.query_one(
@@ -222,6 +537,8 @@ def create_app(config_path: Optional[str] = None) -> FastAPI:
     def submit_feedback(number: str, decision: str = Form(...),
                         actual_action: str = Form(''), comment: str = Form(''),
                         user: Dict[str, Any] = Depends(require_write)):
+        fetch_in_scope(user, number)
+
         valid = {'ACCEPTED', 'REJECTED', 'MODIFIED', 'NOT_APPLICABLE', 'DONE'}
         if decision not in valid:
             raise HTTPException(status_code=400, detail=f'decision must be one of {sorted(valid)}')
@@ -252,17 +569,21 @@ def create_app(config_path: Optional[str] = None) -> FastAPI:
     @app.post('/ticket/{number}/snooze')
     def snooze_ticket(number: str, hours: int = Form(24), reason: str = Form(''),
                       user: Dict[str, Any] = Depends(require_write)):
+        fetch_in_scope(user, number)
         _snooze(ctx, number, hours=hours, reason=reason, username=user['username'])
         return RedirectResponse(f'/ticket/{number}', status_code=303)
 
     @app.post('/ticket/{number}/unsnooze')
     def unsnooze_ticket(number: str, user: Dict[str, Any] = Depends(require_write)):
+        fetch_in_scope(user, number)
         ctx.db.delete('suppression', [{'col': 'incident_number', 'op': 'eq', 'val': number}])
         return RedirectResponse(f'/ticket/{number}', status_code=303)
 
     @app.post('/ticket/{number}/reanalyse')
     def reanalyse(number: str, background: BackgroundTasks,
                   user: Dict[str, Any] = Depends(require_write)):
+        fetch_in_scope(user, number)
+
         ticket = ctx.db.query_one(
             'SELECT * FROM watched_ticket WHERE incident_number = %s', (number,))
         if not ticket:
@@ -278,8 +599,10 @@ def create_app(config_path: Optional[str] = None) -> FastAPI:
 
     @app.get('/agents', response_class=HTMLResponse)
     def agents_view(request: Request, user: Dict[str, Any] = Depends(require_user)):
-        visible = users.visible_groups(user, ctx.known_assignment_groups())
-        rows = builder.board_rows(assignment_groups=visible or None)
+        visible = scope_of(user)
+        # `visible or None` would have meant board_rows saw None and returned
+        # every group - the same inversion as on /board.
+        rows = [] if not visible else builder.board_rows(assignment_groups=visible)
         rollup = builder.by_agent(rows)
 
         compliance = builder.compliance_context([entry['agent'] for entry in rollup][:60])
@@ -291,7 +614,9 @@ def create_app(config_path: Optional[str] = None) -> FastAPI:
 
     @app.get('/accuracy', response_class=HTMLResponse)
     def accuracy_view(request: Request, days: int = 30,
-                      user: Dict[str, Any] = Depends(require_user)):
+                      user: Dict[str, Any] = Depends(require_lead)):
+        # Aggregated across every group, with no per-group breakdown to scope,
+        # so entitlement is the role rather than the queue list.
         return render(request, 'accuracy.html', days=days, **_accuracy_metrics(ctx, days))
 
     # -----------------------------------------------------------------
@@ -329,8 +654,15 @@ def create_app(config_path: Optional[str] = None) -> FastAPI:
     # -----------------------------------------------------------------
 
     @app.get('/digest/preview', response_class=HTMLResponse)
-    def digest_preview(user: Dict[str, Any] = Depends(require_user)):
-        return HTMLResponse(dispatcher.preview_lead_digest())
+    def digest_preview(user: Dict[str, Any] = Depends(require_lead)):
+        # Scoped as well as role-gated: a lead restricted to one queue should
+        # preview the digest they would receive, not the one the whole desk
+        # receives.
+        visible = scope_of(user)
+        if not visible:
+            raise HTTPException(status_code=403,
+                                detail='Your account has no assignment group scope')
+        return HTMLResponse(dispatcher.preview_lead_digest(assignment_groups=visible))
 
     @app.post('/digest/send')
     def digest_send(background: BackgroundTasks,
@@ -347,20 +679,21 @@ def create_app(config_path: Optional[str] = None) -> FastAPI:
     def api_board(user: Dict[str, Any] = Depends(require_user),
                   group: Optional[str] = None,
                   min_score: int = Query(0, ge=0, le=100)):
-        rows = builder.board_rows(assignment_groups=[group] if group else None,
-                                  min_score=min_score)
+        # This route previously ignored the caller's scope entirely, so a lead
+        # restricted to one queue could read every group through the API that
+        # the board would not show them.
+        groups = narrow_scope(user, group)
+        rows = ([] if not groups else
+                builder.board_rows(assignment_groups=groups, min_score=min_score))
         return JSONResponse(json.loads(json.dumps(rows, default=str)))
 
     @app.get('/api/ticket/{number}')
     def api_ticket(number: str, user: Dict[str, Any] = Depends(require_user)):
-        row = ctx.db.query_one(
-            'SELECT * FROM v_current_board WHERE incident_number = %s', (number,))
-        if not row:
-            raise HTTPException(status_code=404, detail='Not tracked')
+        row = fetch_in_scope(user, number)
         return JSONResponse(json.loads(json.dumps(builder.decorate(row), default=str)))
 
     @app.get('/api/accuracy')
-    def api_accuracy(days: int = 30, user: Dict[str, Any] = Depends(require_user)):
+    def api_accuracy(days: int = 30, user: Dict[str, Any] = Depends(require_lead)):
         return JSONResponse(json.loads(json.dumps(_accuracy_metrics(ctx, days), default=str)))
 
     @app.get('/healthz')
