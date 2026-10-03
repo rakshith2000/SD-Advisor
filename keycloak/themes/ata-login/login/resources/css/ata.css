@@ -1,0 +1,400 @@
+/* Aged Ticket Advisor - Keycloak login theme
+ *
+ * Layered over the stock `keycloak` theme, not replacing it. The tokens below
+ * are lifted verbatim from web/static/app.css so the sign-in page and the
+ * board are visibly the same product - someone arriving from a digest link
+ * should not feel handed off to a different system mid-flow.
+ *
+ * Selectors are written against the IDs Keycloak has kept stable across
+ * versions 20-26 (#kc-form-login, #kc-login, .card-pf, #kc-header-wrapper,
+ * #kc-social-providers). PatternFly carries high specificity, so a few rules
+ * need !important to win; each one is there because PatternFly sets the same
+ * property, not as a blanket habit.
+ *
+ * Status colour is never the only signal - every state here also carries text.
+ */
+
+:root {
+  --ata-surface: #fcfcfb;
+  --ata-plane: #f9f9f7;
+  --ata-text: #0b0b0b;
+  --ata-text-2: #52514e;
+  --ata-muted: #898781;
+  --ata-grid: #e1e0d9;
+  --ata-axis: #c3c2b7;
+  --ata-accent: #2a78d6;
+  --ata-critical: #d03b3b;
+  --ata-warning: #fab219;
+  --ata-good: #0ca30c;
+  --ata-font: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --ata-surface: #1a1a19;
+    --ata-plane: #0d0d0d;
+    --ata-text: #ffffff;
+    --ata-text-2: #c3c2b7;
+    --ata-muted: #898781;
+    --ata-grid: #2c2c2a;
+    --ata-axis: #383835;
+    --ata-accent: #3987e5;
+  }
+}
+
+/* ---------- page ---------- */
+
+/* The stock theme paints a full-bleed background image. Clearing the
+   shorthand first removes it in one go rather than fighting each longhand. */
+.login-pf body,
+body.login-pf,
+body {
+  background: var(--ata-plane) !important;
+  font-family: var(--ata-font) !important;
+  color: var(--ata-text);
+}
+
+.login-pf-page {
+  padding-top: 0 !important;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+}
+
+/* ---------- brand header ---------- */
+/* The text itself comes from loginTitleHtml in messages_en.properties, so it
+   stays real markup in the DOM and remains translatable - rather than being
+   injected through a CSS content property, which screen readers skip. */
+
+#kc-header {
+  width: 100%;
+  max-width: 380px;
+  padding: 0 0 14px 0 !important;
+  margin: 0 auto;
+}
+
+#kc-header-wrapper {
+  padding: 0 !important;
+  font-size: inherit !important;
+  font-weight: 400 !important;
+  letter-spacing: normal !important;
+  text-transform: none !important;
+  color: var(--ata-text) !important;
+  line-height: 1.4;
+  white-space: normal;
+  text-align: left;
+}
+
+.ata-brand {
+  display: block;
+  font-size: 19px;
+  font-weight: 600;
+  color: var(--ata-text);
+}
+
+.ata-sub {
+  display: block;
+  margin-top: 3px;
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--ata-text-2);
+}
+
+/* ---------- card ---------- */
+
+.card-pf {
+  width: 100%;
+  max-width: 380px;
+  margin: 0 auto !important;
+  padding: 28px !important;
+  background: var(--ata-surface) !important;
+  border: 1px solid var(--ata-grid) !important;
+  border-radius: 8px !important;
+  box-shadow: none !important;
+}
+
+/* The stock theme prints "Sign in to your account" twice in effect - once in
+   the header, once as the page title. One is enough. */
+#kc-page-title {
+  font: 600 14px/1.4 var(--ata-font);
+  color: var(--ata-text-2);
+  margin: 0 0 16px 0;
+  text-align: left;
+}
+
+.login-pf-header {
+  margin-bottom: 0 !important;
+}
+
+/* ---------- fields ---------- */
+
+#kc-form-login .form-group,
+#kc-form-login .pf-c-form__group {
+  margin-bottom: 13px;
+}
+
+#kc-form-login label,
+.pf-c-form__label,
+.pf-c-form__label-text {
+  display: block;
+  font-size: 11px !important;
+  font-weight: 600 !important;
+  color: var(--ata-muted) !important;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-bottom: 3px;
+}
+
+#kc-form-login input[type="text"],
+#kc-form-login input[type="password"],
+#kc-form-login input[type="email"],
+input.pf-c-form-control,
+.pf-c-form-control {
+  width: 100%;
+  font: 400 13px/1.4 var(--ata-font) !important;
+  color: var(--ata-text) !important;
+  background: var(--ata-surface) !important;
+  border: 1px solid var(--ata-axis) !important;
+  border-radius: 5px !important;
+  padding: 8px 9px !important;
+  height: auto !important;
+  box-shadow: none !important;
+}
+
+#kc-form-login input:focus,
+.pf-c-form-control:focus {
+  outline: 2px solid var(--ata-accent) !important;
+  outline-offset: -1px;
+  border-color: var(--ata-accent) !important;
+}
+
+/* The stock theme underlines the focused field with a thick accent bar on top
+   of the outline; one focus indicator is clearer than two. */
+.pf-c-form-control:focus {
+  --pf-c-form-control--BorderBottomWidth: 1px;
+}
+
+/* ---------- password visibility toggle ---------- */
+
+.pf-c-input-group {
+  background: transparent !important;
+}
+
+.pf-c-input-group .pf-c-button {
+  background: var(--ata-surface) !important;
+  border: 1px solid var(--ata-axis) !important;
+  border-left: none !important;
+  border-radius: 0 5px 5px 0 !important;
+  color: var(--ata-muted) !important;
+}
+
+.pf-c-input-group .pf-c-form-control {
+  border-radius: 5px 0 0 5px !important;
+}
+
+/* ---------- buttons ---------- */
+
+#kc-login,
+input[type="submit"].pf-c-button.pf-m-primary,
+.pf-c-button.pf-m-primary {
+  width: 100%;
+  font: 600 13px/1 var(--ata-font) !important;
+  padding: 10px 14px !important;
+  border-radius: 5px !important;
+  border: 1px solid var(--ata-accent) !important;
+  background: var(--ata-accent) !important;
+  color: #ffffff !important;
+  cursor: pointer;
+  margin-top: 6px;
+}
+
+#kc-login:hover,
+.pf-c-button.pf-m-primary:hover {
+  filter: brightness(0.94);
+}
+
+#kc-login:focus-visible,
+.pf-c-button:focus-visible {
+  outline: 2px solid var(--ata-text);
+  outline-offset: 2px;
+}
+
+/* ---------- identity providers ---------- */
+
+#kc-social-providers {
+  margin-top: 18px;
+  padding-top: 0;
+  border-top: none;
+}
+
+#kc-social-providers hr {
+  border: 0;
+  border-top: 1px solid var(--ata-grid);
+  margin: 0 0 14px 0;
+}
+
+#kc-social-providers h4,
+#kc-social-providers h2 {
+  font: 400 12px/1.4 var(--ata-font) !important;
+  color: var(--ata-muted) !important;
+  text-align: center;
+  margin: 0 0 10px 0;
+  text-transform: none;
+}
+
+#kc-social-providers ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+#kc-social-providers a.pf-c-button,
+#kc-social-providers li a {
+  display: block;
+  width: 100%;
+  text-align: center;
+  font: 600 13px/1 var(--ata-font) !important;
+  padding: 10px 14px !important;
+  border-radius: 5px !important;
+  border: 1px solid var(--ata-axis) !important;
+  background: var(--ata-surface) !important;
+  color: var(--ata-text) !important;
+  text-decoration: none;
+}
+
+#kc-social-providers a:hover {
+  background: var(--ata-plane) !important;
+}
+
+/* ---------- alerts ---------- */
+/* Shape and an icon as well as hue, so the state survives a monochrome screen
+   or a red-green colour deficiency. */
+
+.alert,
+.pf-c-alert {
+  font: 400 13px/1.5 var(--ata-font) !important;
+  border-radius: 5px !important;
+  padding: 10px 12px !important;
+  margin-bottom: 14px !important;
+  border: 1px solid var(--ata-grid) !important;
+  background: var(--ata-plane) !important;
+  box-shadow: none !important;
+}
+
+.alert-error,
+.pf-m-danger {
+  border-left: 3px solid var(--ata-critical) !important;
+  color: var(--ata-text) !important;
+}
+
+.alert-warning,
+.pf-m-warning {
+  border-left: 3px solid var(--ata-warning) !important;
+}
+
+.alert-success,
+.pf-m-success {
+  border-left: 3px solid var(--ata-good) !important;
+}
+
+.alert-info,
+.pf-m-info {
+  border-left: 3px solid var(--ata-accent) !important;
+}
+
+.pf-c-alert__title {
+  font-size: 13px !important;
+  font-weight: 400 !important;
+  color: var(--ata-text) !important;
+}
+
+/* ---------- secondary links ---------- */
+
+a {
+  color: var(--ata-accent);
+  text-decoration: none;
+}
+
+a:hover {
+  text-decoration: underline;
+}
+
+#kc-form-options,
+#kc-form-options a,
+#kc-info-wrapper,
+.login-pf-settings {
+  font-size: 12px !important;
+  color: var(--ata-text-2);
+}
+
+#kc-info {
+  width: 100%;
+  max-width: 380px;
+  margin: 12px auto 0 !important;
+  padding: 0 !important;
+  background: transparent !important;
+  border: none !important;
+}
+
+#kc-info-wrapper {
+  background: transparent !important;
+  padding: 0 !important;
+  text-align: center;
+}
+
+/* "Remember me" sits closer to the field it belongs with. */
+#kc-form-options .checkbox label {
+  text-transform: none !important;
+  letter-spacing: normal !important;
+  font-size: 12px !important;
+  font-weight: 400 !important;
+  color: var(--ata-text-2) !important;
+}
+
+/* ---------- a standing note under the card ---------- */
+/* Cosmetic only, and the one place this theme does use generated content:
+   the parent template has no footer slot that can be filled from a message
+   bundle without forking it. Nothing here carries meaning a user needs. */
+
+.login-pf-page::after {
+  content: "Read-only against ServiceNow \00B7 Internal use";
+  display: block;
+  width: 100%;
+  max-width: 380px;
+  margin: 14px auto 0;
+  text-align: center;
+  font: 400 11px/1.5 var(--ata-font);
+  color: var(--ata-muted);
+}
+
+/* ---------- small screens ---------- */
+
+@media (max-width: 440px) {
+  .card-pf {
+    padding: 20px !important;
+    border-radius: 0 !important;
+    border-left: none !important;
+    border-right: none !important;
+  }
+
+  #kc-header,
+  #kc-info,
+  .login-pf-page::after {
+    padding-left: 20px !important;
+    padding-right: 20px !important;
+  }
+}
+
+/* ---------- reduced motion ---------- */
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    transition: none !important;
+    animation: none !important;
+  }
+}
