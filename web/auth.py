@@ -385,7 +385,9 @@ class UserStore:
                  username, current['role'], role, source)
 
     def jit_upsert(self, identity: Dict[str, Any], default_role: str = 'VIEWER',
-                   default_groups: Optional[List[str]] = None) -> Dict[str, Any]:
+                   default_groups: Optional[List[str]] = None,
+                   groups_source: str = 'MANUAL',
+                   refresh_groups: bool = False) -> Dict[str, Any]:
         """Create or refresh an account from verified token claims.
 
         Keyed on external_id, never on username. A username can change - a name
@@ -418,14 +420,32 @@ class UserStore:
                          identity['username'], external_id)
 
         if row is not None:
-            self.db.update('advisor_user', {
+            changes: Dict[str, Any] = {
                 'external_id': external_id,
                 'full_name': identity.get('full_name') or row.get('full_name'),
                 'email': identity.get('email') or row.get('email'),
                 'auth_source': 'OIDC',
                 'last_login_at': now,
                 'last_seen_idp_at': now,
-            }, conditions=[{'col': 'id', 'op': 'eq', 'val': row['id']}])
+            }
+
+            # Re-derive the scope only when this account's scope was derived in
+            # the first place. A scope an administrator typed in, or granted
+            # when approving a Lead request, is theirs - overwriting it on the
+            # holder's next sign-in would revert a deliberate decision, and
+            # nobody reports that as a bug. They just quietly lose half the
+            # board.
+            if (refresh_groups and default_groups
+                    and row.get('groups_source') == 'SERVICENOW'):
+                incoming = ', '.join(default_groups)
+                if incoming != (row.get('assignment_groups') or ''):
+                    log.info('Refreshed scope for %s from ServiceNow: %r -> %r',
+                             row['username'], row.get('assignment_groups'), incoming)
+                changes['assignment_groups'] = incoming
+                changes['groups_synced_at'] = now
+
+            self.db.update('advisor_user', changes,
+                           conditions=[{'col': 'id', 'op': 'eq', 'val': row['id']}])
             return self.live(row['username'])
 
         self.db.insert('advisor_user', {
@@ -437,13 +457,18 @@ class UserStore:
             'role': default_role,
             'auth_source': 'OIDC',
             'role_source': 'MANUAL',
+            'groups_source': groups_source if default_groups else 'MANUAL',
             'assignment_groups': ', '.join(default_groups) if default_groups else None,
+            'groups_synced_at': now if (default_groups and groups_source == 'SERVICENOW') else None,
             'active': 1,
             'last_login_at': now,
             'last_seen_idp_at': now,
             'created_at': now,
         })
-        log.info('Provisioned %r as %s from single sign-on', identity['username'], default_role)
+        log.info('Provisioned %r as %s from single sign-on, scope=%s (%s)',
+                 identity['username'], default_role,
+                 ', '.join(default_groups) if default_groups else 'none',
+                 groups_source if default_groups else 'none')
         return self.live(identity['username'])
 
     def create(self, username: str, password: str, full_name: str = '',

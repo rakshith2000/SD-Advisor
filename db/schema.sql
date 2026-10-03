@@ -293,9 +293,14 @@ CREATE TABLE IF NOT EXISTS advisor_user (
     role              ENUM('ADMIN','LEAD','VIEWER') NOT NULL DEFAULT 'LEAD',
     auth_source       ENUM('LOCAL','OIDC') NOT NULL DEFAULT 'LOCAL',
     role_source       ENUM('MANUAL','REQUEST','RECONCILE') NOT NULL DEFAULT 'MANUAL',
+    -- How the scope below was arrived at. Only SERVICENOW scopes are ever
+    -- re-derived automatically; a scope an administrator set, or that came
+    -- with an approved role request, is never overwritten by a sign-in.
+    groups_source     ENUM('MANUAL','REQUEST','SERVICENOW') NOT NULL DEFAULT 'MANUAL',
     assignment_groups TEXT         NULL,
     active            TINYINT(1)   NOT NULL DEFAULT 1,
     role_changed_at   DATETIME     NULL,
+    groups_synced_at  DATETIME     NULL,
     last_login_at     DATETIME     NULL,
     last_seen_idp_at  DATETIME     NULL,
     created_at        DATETIME     NOT NULL,

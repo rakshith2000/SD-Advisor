@@ -233,6 +233,45 @@ def create_app(config_path: Optional[str] = None) -> FastAPI:
                             samesite='lax', secure=sessions.secure, path='/oidc')
         return response
 
+    def _initial_scope(identity: Dict[str, Any]) -> tuple:
+        """Assignment groups to give a newly provisioned account.
+
+        Derived from ServiceNow group membership, because someone already in
+        an assignment group can already see those tickets in ServiceNow -
+        mirroring it here grants no access they did not have, it only saves an
+        administrator from typing it in. Role is a different matter and stays
+        a human decision.
+
+        Never raises. A slow or unreachable ServiceNow degrades to the
+        configured default scope; the person has authenticated correctly and
+        this is an enrichment, not a condition of signing in.
+        """
+        fallback = (list(ctx.settings.get('auth.oidc.default_viewer_groups', [])),
+                    'MANUAL')
+
+        if not bool(ctx.settings.get('auth.oidc.scope_from_servicenow', True)):
+            return fallback
+
+        try:
+            derived = ctx.directory.assignment_groups_for(
+                email=identity.get('email'),
+                username=identity.get('username'),
+                known_groups=ctx.known_assignment_groups())
+        except Exception:
+            log.exception('Could not derive a scope from ServiceNow for %s - '
+                          'falling back to the configured default',
+                          identity.get('username'))
+            return fallback
+
+        if not derived:
+            # Not an error: an unmatched person, or one whose groups the
+            # advisor does not track. Either way nothing was learned, so the
+            # configured default applies and the board shows its no-scope
+            # banner rather than an empty page with no explanation.
+            return fallback
+
+        return derived, 'SERVICENOW'
+
     @app.get('/oidc/callback')
     def oidc_callback(request: Request, code: str = '', state: str = '',
                       error: str = '', error_description: str = ''):
@@ -260,10 +299,14 @@ def create_app(config_path: Optional[str] = None) -> FastAPI:
                 log.info('Refused an unprovisioned account: %s', identity['username'])
                 return render(request, 'no_access.html', identity=identity, user=None)
         else:
+            groups, source = _initial_scope(identity)
             account = users.jit_upsert(
                 identity,
                 default_role=str(ctx.settings.get('auth.oidc.default_role', 'VIEWER')),
-                default_groups=list(ctx.settings.get('auth.oidc.default_viewer_groups', [])))
+                default_groups=groups,
+                groups_source=source,
+                refresh_groups=bool(ctx.settings.get(
+                    'auth.oidc.refresh_scope_on_login', False)))
 
         if not account or not account.get('active'):
             log.info('Single sign-on succeeded for a disabled account: %s',

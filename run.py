@@ -564,6 +564,26 @@ def cmd_doctor(args) -> int:
                            'reconcile disabled - a leaver stays on the digest until '
                            'deactivated by hand'))
 
+    if (mode in ('oidc', 'both')
+            and ctx.settings.get('auth.oidc.scope_from_servicenow', True)):
+        def scope_source_check():
+            """sys_user_grmember must be readable, or every new account lands
+            with the fallback scope and nobody is told why."""
+            status = ctx.directory.probe()
+            if not status.get('readable'):
+                raise RuntimeError(
+                    f"sys_user_grmember is not readable by the integration user "
+                    f"({status.get('error', 'unknown error')}). New single sign-on "
+                    f"accounts would silently fall back to "
+                    f"auth.oidc.default_viewer_groups. Either grant read access or "
+                    f"set auth.oidc.scope_from_servicenow false to make that "
+                    f"deliberate.")
+            tracked = ctx.known_assignment_groups()
+            return (f'sys_user_grmember readable; '
+                    f'{len(tracked)} tracked group(s) to match against')
+
+        check('snow group membership', scope_source_check)
+
     local_enabled = bool(ctx.settings.get('auth.local_login.enabled', True))
     allow = ', '.join(ctx.settings.get('auth.local_login.allow_roles', ['ADMIN', 'LEAD', 'VIEWER']))
     checks.append(('INFO', 'auth mode',

@@ -170,8 +170,14 @@
             "jit_provisioning": true,
             "default_role": "VIEWER",
 
-            "_comment_scope": "Readable by anyone in the realm who signs in, because any of them can obtain a VIEWER account. [] means no queues until an administrator or an approved request grants some - the board renders with a banner rather than appearing broken. Set this deliberately; the empty default is the safe one, not the useful one.",
-            "default_viewer_groups": []
+            "_comment_scope": "Fallback only - used when scope_from_servicenow is off, or when the ServiceNow lookup matches nothing. Readable by anyone in the realm who signs in, because any of them can obtain a VIEWER account. [] means no queues until an administrator or an approved request grants some; the board renders with a banner rather than appearing broken.",
+            "default_viewer_groups": [],
+
+            "_comment_snow_scope": "On first sign-in, read the person's membership from sys_user_grmember and use the intersection with the groups this advisor tracks as their initial scope. Safe to leave on: being in an assignment group already grants visibility of those tickets in ServiceNow itself, so this grants no access they did not have - it only saves an administrator from typing it in. Role is never derived this way. A ServiceNow outage degrades to default_viewer_groups rather than failing the sign-in.",
+            "scope_from_servicenow": true,
+
+            "_comment_refresh_scope": "Re-derive on every sign-in, not only the first, so a team move is picked up without an administrator noticing. Only touches accounts whose groups_source is SERVICENOW - a scope an administrator set, or that came with an approved Lead request, is never overwritten. Off by default because it makes each sign-in depend on a ServiceNow read.",
+            "refresh_scope_on_login": false
         },
 
         "role_requests": {

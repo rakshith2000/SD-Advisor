@@ -17,6 +17,7 @@ from core.db import Database, build_audit_database, build_database
 from core.logging_setup import get_logger, setup_logging
 from core.llm.client import LlmClient
 from core.snow.base import ServiceNowClient
+from core.snow.directory import DirectoryReader
 from core.snow.incidents import IncidentReader
 from core.snow.knowledge import KnowledgeReader
 from core.snow.sla import SlaReader
@@ -49,6 +50,7 @@ class AppContext:
         self.incidents = IncidentReader(self.snow, settings.assignment_groups)
         self.sla = SlaReader(self.snow, settings)
         self.knowledge = KnowledgeReader(self.snow)
+        self.directory = DirectoryReader(self.snow)
 
         self.sync = TicketSync(self.db, self.incidents, settings)
 
