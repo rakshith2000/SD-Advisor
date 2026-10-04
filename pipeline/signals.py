@@ -71,8 +71,12 @@ SYSTEM_NOISE_FIELDS = {
 # activity view and excluded from every signal: an incident's channel or its
 # reopen counter moving is a fact about the record, and letting either reset
 # the inactivity clock would hide a stale ticket.
+#
+# `incident_state` is deliberately absent. It is the legacy column and carries
+# the same value as `state`, kept in sync by the platform, so including both
+# listed every status change twice under two labels that mean one thing.
 DISPLAY_ONLY_FIELDS = {
-    'incident_state', 'severity', 'caller_id', 'contact_type', 'opened_at',
+    'severity', 'caller_id', 'contact_type', 'opened_at', 'follow_up',
     'reopen_count', 'reassignment_count', 'location', 'business_service',
     'parent_incident', 'resolved_at', 'resolved_by', 'closed_at', 'closed_by',
     'u_assigned_region',

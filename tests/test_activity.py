@@ -129,6 +129,49 @@ class TestGrouping:
     def test_an_empty_timeline_produces_no_cards(self):
         assert group_activity([]) == []
 
+    def test_a_field_is_listed_once_per_card(self):
+        """ServiceNow writes more than one history line for a field in one
+        update set - datetime columns especially, where the same instant is
+        rendered two ways. They are not exact repeats, so get_history keeps
+        both, and Opened was being listed twice on the creation card."""
+        history = [
+            change('opened_at', '2026-09-22 09:18:44'),
+            change('opened_at', '2026-09-22 09:18:44', old='2026-09-22 09:18:44'),
+            change('opened_at', '22-09-2026 09:18:44'),
+        ]
+        rows = grouped(history)[0]['changes']
+        assert [r['label'] for r in rows] == ['Opened']
+
+    def test_collapsing_keeps_the_oldest_before_and_the_newest_after(self):
+        """The row has to read as the net change across the save, not as
+        whichever history line happened to come back last."""
+        history = [
+            change('priority', '2 - High', old='3 - Medium'),
+            change('priority', '1 - Critical', old='2 - High'),
+        ]
+        row = grouped(history)[0]['changes'][0]
+        assert row['previous'] == '3 - Medium'
+        assert row['value'] == '1 - Critical'
+
+    def test_a_field_changed_and_put_back_is_not_listed(self):
+        """Identical before and after reads as a fault in the page rather
+        than as the non-event it is."""
+        history = [
+            change('priority', '2 - High', old='3 - Medium'),
+            change('priority', '3 - Medium', old='2 - High'),
+        ]
+        assert grouped(history) == []
+
+    def test_a_card_is_dropped_only_when_nothing_is_left(self):
+        history = [
+            change('priority', '2 - High', old='3 - Medium'),
+            change('priority', '3 - Medium', old='2 - High'),
+            change('state', 'In Progress', old='New'),
+        ]
+        cards = grouped(history)
+        assert len(cards) == 1
+        assert [r['label'] for r in cards[0]['changes']] == ['State']
+
     def test_the_limit_counts_cards_not_fields(self):
         """Ten fields in one save must not consume ten of the budget."""
         cards = group_activity(
@@ -143,14 +186,21 @@ class TestGrouping:
 
 class TestAllowList:
     @pytest.mark.parametrize('field', [
-        'short_description', 'description', 'state', 'incident_state',
-        'priority', 'impact', 'urgency', 'severity', 'assigned_to',
-        'assignment_group', 'category', 'subcategory', 'cmdb_ci', 'caller_id',
-        'contact_type', 'close_code', 'close_notes', 'problem_id', 'rfc',
-        'reopen_count',
+        'short_description', 'description', 'state', 'priority', 'impact',
+        'urgency', 'severity', 'assigned_to', 'assignment_group', 'category',
+        'subcategory', 'cmdb_ci', 'caller_id', 'contact_type', 'close_code',
+        'close_notes', 'problem_id', 'rfc', 'reopen_count', 'follow_up',
+        'hold_reason',
     ])
     def test_every_standard_incident_field_is_readable(self, field):
         assert field in READABLE_FIELDS
+
+    def test_the_legacy_state_column_is_not_shown_alongside_state(self):
+        """incident_state carries the same value as state, kept in sync by the
+        platform. Showing both listed one status change twice under two
+        labels that mean the same thing."""
+        assert 'incident_state' not in READABLE_FIELDS
+        assert grouped([change('incident_state', 'New')]) == []
 
     @pytest.mark.parametrize('field', [
         # Email: ServiceNow records sends against the record, and they are
@@ -265,17 +315,31 @@ class TestValues:
         assert row['value'] == ''
         assert row['previous'] == 'Awaiting Caller'
 
-    def test_a_timestamp_value_is_flagged_for_conversion(self):
-        """Otherwise an 'Opened' row renders raw UTC and contradicts every
-        other time on the page."""
+    def test_a_date_value_is_shown_exactly_as_servicenow_recorded_it(self):
+        """sys_history_line holds the rendered string, already in the
+        timezone of whoever made the change. Putting it through the UTC-based
+        display filter would shift it a second time - five or six hours for
+        Central, on every date value, with nothing raised."""
         row = grouped([change('opened_at', '2026-09-22 09:18:44')])[0]['changes'][0]
-        assert row['is_timestamp'] is True
+        assert row['value'] == '2026-09-22 09:18:44'
 
-    @pytest.mark.parametrize('value', ['3 - Medium', 'Service Desk', '',
+    def test_a_follow_up_date_is_shown(self):
+        row = grouped([change('follow_up', '2026-09-25 14:00:00')])[0]['changes'][0]
+        assert row['label'] == 'Follow up'
+        assert row['value'] == '2026-09-25 14:00:00'
+
+    def test_setting_a_follow_up_date_does_not_reset_the_idle_clock(self):
+        """Pencilling in a reminder is not the same as progressing the
+        incident, and treating it as work would hide a stale ticket."""
+        timeline = build_timeline([change('follow_up', '2026-09-25 14:00:00')],
+                                  CALLER, SYSTEM_ACCOUNTS)
+        assert timeline[0]['counts_as_action'] is False
+
+    @pytest.mark.parametrize('value', ['3 - Medium', 'Service Desk',
                                        '2026-09-22', 'AL94LBWH3'])
-    def test_ordinary_values_are_not_mistaken_for_timestamps(self, value):
+    def test_values_are_passed_through_untouched(self, value):
         row = grouped([change('priority', value, old='x')])[0]['changes'][0]
-        assert row['is_timestamp'] is False
+        assert row['value'] == value
 
 
 # ---------------------------------------------------------------------------

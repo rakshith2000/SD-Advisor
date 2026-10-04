@@ -166,19 +166,18 @@
             {% if entry.kind == 'field_changes' %}
             <dl class="activity-fields">
               {% for change in entry.changes %}
+              {#
+                Values are shown as ServiceNow recorded them. A date here is
+                already in somebody's local timezone, so putting it through
+                the UTC-based display filter would shift it twice - see the
+                note in web/activity.py. The header time above is the one
+                converted, and it is the one to trust.
+              #}
               <dt>{{ change.label }}</dt>
               <dd>
-                {%- if change.is_timestamp -%}
-                  {{ change.value | localdt('%Y-%m-%d %H:%M:%S') }}
-                {%- else -%}
-                  {{ change.value or '(empty)' }}
-                {%- endif -%}
+                {{- change.value or '(empty)' -}}
                 {% if change.previous %}
-                <span class="activity-was">was
-                  {%- if change.previous_is_timestamp %}
-                  {{ change.previous | localdt('%Y-%m-%d %H:%M:%S') }}
-                  {%- else %} {{ change.previous }}{% endif -%}
-                </span>
+                <span class="activity-was">was {{ change.previous }}</span>
                 {% endif %}
               </dd>
               {% endfor %}

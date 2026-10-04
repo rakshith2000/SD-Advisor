@@ -59,9 +59,9 @@ FIELD_LABELS = {
     'closed_by': 'Closed by',
     'cmdb_ci': 'Configuration item',
     'contact_type': 'Contact type',
+    'follow_up': 'Follow up',
     'hold_reason': 'On hold reason',
     'impact': 'Impact',
-    'incident_state': 'Incident state',
     'location': 'Location',
     'opened_at': 'Opened',
     'parent_incident': 'Parent incident',
@@ -82,9 +82,18 @@ FIELD_LABELS = {
 
 EMPTY_VALUE = '(empty)'
 
-# Strict on purpose. A lenient parse would catch '3 - Medium' as a date in
-# some locales and render a priority as a timestamp.
-_TIMESTAMP = re.compile(r'^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}$')
+# A note on dates in field values.
+#
+# They are shown exactly as ServiceNow recorded them, and deliberately not put
+# through the display-timezone filter the rest of the page uses.
+#
+# That filter reads its input as naive UTC, which is true of everything this
+# service stores. It is not true here: sys_history_line holds the rendered
+# string, formatted in the timezone of whoever made the change. Converting it
+# would treat an already-local time as UTC and shift it a second time - five
+# or six hours for Central, in the same direction, on every date value, with
+# nothing raised. The card header is the timestamp to trust; it comes from
+# update_time, which get_history reads as a real UTC value.
 
 
 def field_label(name: Optional[str]) -> str:
@@ -128,10 +137,6 @@ def card_kind(field: Optional[str]) -> str:
     return CARD_FIELD_CHANGES
 
 
-def _is_timestamp(value: str) -> bool:
-    return bool(_TIMESTAMP.match((value or '').strip()))
-
-
 def group_activity(timeline: Sequence[Dict[str, Any]],
                    limit: int = 60) -> List[Dict[str, Any]]:
     """Collapse a flat timeline into ServiceNow-style cards, newest first.
@@ -170,31 +175,54 @@ def group_activity(timeline: Sequence[Dict[str, Any]],
                 'role': event.get('role') or 'SYSTEM',
                 'changes': [],
                 'text': '',
+                # field -> the row above, so a second history line for the
+                # same field updates it instead of adding another.
+                '_rows': {},
             }
             groups.append(current)
 
         if kind == CARD_FIELD_CHANGES:
             value = str(event.get('new') or '').strip()
             previous = str(event.get('old') or '').strip()
-            current['changes'].append({
+
+            existing = current['_rows'].get(field)
+            if existing is not None:
+                # ServiceNow writes more than one history line for a field in
+                # a single update set - datetime columns especially, where the
+                # same instant is rendered two ways. They are not exact
+                # repeats, so the fingerprint in get_history keeps both, and
+                # the field would otherwise be listed twice on one card.
+                # Collapse to the net change: the oldest before, newest after.
+                existing['value'] = value
+                if not existing['previous'] and previous:
+                    existing['previous'] = previous
+                continue
+
+            row = {
                 'field': field,
                 'label': field_label(field),
                 'value': value,
                 'previous': previous,
-                # Rendered through the display-timezone filter rather than
-                # shown raw, so an 'Opened' row does not contradict every
-                # other time on the page by being eight hours out.
-                'is_timestamp': _is_timestamp(value),
-                'previous_is_timestamp': _is_timestamp(previous),
-            })
+            }
+            current['changes'].append(row)
+            current['_rows'][field] = row
         else:
             current['text'] = event.get('text') or ''
 
     for group in groups:
+        group.pop('_rows', None)
+        # A field edited and put back within one save nets to nothing. Listing
+        # it as a change with identical before and after reads as a fault in
+        # the page rather than as the non-event it is.
+        group['changes'] = [c for c in group['changes'] if c['value'] != c['previous']]
         # Alphabetical, as ServiceNow lists them. The audit order is the order
         # the columns happen to sit in the table, which is meaningless to a
         # reader and different between two otherwise identical saves.
         group['changes'].sort(key=lambda change: change['label'].lower())
+
+    # A card whose only rows collapsed to no-ops has nothing left to say.
+    groups = [g for g in groups
+              if g['kind'] != CARD_FIELD_CHANGES or g['changes']]
 
     groups.reverse()
     return groups[:limit] if limit else groups
