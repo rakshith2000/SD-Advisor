@@ -18,7 +18,11 @@
 {% if user %}
 <header class="topbar">
   <div class="topbar-inner">
-    <div class="brand">Aged Ticket Advisor <span>&middot; {{ customer }}</span></div>
+    <div class="brand">
+      <span class="brand-logo" aria-hidden="true"></span>
+      <span class="brand-icon" aria-hidden="true"></span>
+      <span class="brand-text">Aged Ticket Advisor <span>&middot; {{ customer }}</span></span>
+    </div>
     {% set path = request.url.path %}
     <nav class="nav">
       <a href="/board"    class="{{ 'active' if path.startswith('/board') or path.startswith('/ticket') }}">Board</a>

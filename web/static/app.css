@@ -20,7 +20,8 @@
   --grid: #e1e0d9;
   --axis: #c3c2b7;
   --border: rgba(11, 11, 11, 0.10);
-
+  --logo: url('/static/images/kohler_logo_white.png');
+  --icon: url('/static/images/white.svg');
   --accent: #2a78d6;
   --accent-soft: #cde2fb;
 
@@ -46,6 +47,8 @@
     --grid: #2c2c2a;
     --axis: #383835;
     --border: rgba(255, 255, 255, 0.10);
+    --logo: url('/static/images/kohler_logo_black.png');
+    --icon: url('/static/images/black.svg');
     --accent: #3987e5;
     --accent-soft: #184f95;
     --success-text: #0ca30c;
@@ -93,8 +96,33 @@ a:hover { text-decoration: underline; }
   max-width: 1400px; margin: 0 auto; padding: 0 20px;
   display: flex; align-items: center; gap: 24px; min-height: 56px;
 }
-.brand { font-weight: 600; font-size: 15px; letter-spacing: -0.01em; white-space: nowrap; }
-.brand span { color: var(--text-muted); font-weight: 400; }
+.brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+  font-size: 15px;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+}
+.brand-text span { color: var(--text-muted); font-weight: 400; }
+.brand-logo,
+.brand-icon {
+  display: inline-block;
+  background-repeat: no-repeat;
+  background-position: left center;
+  background-size: contain;
+}
+.brand-logo {
+  width: 90px;
+  height: 18px;
+  background-image: var(--logo);
+}
+.brand-icon {
+  width: 140px;
+  height: 18px;
+  background-image: var(--icon);
+}
 
 .nav { display: flex; gap: 4px; flex: 1; flex-wrap: wrap; }
 .nav a {
