@@ -56,24 +56,38 @@ AGENT_ACTION_FIELDS = {
     'short_description', 'description', 'problem_id', 'rfc',
 }
 
-# Fields that churn on their own and must never reset the idle clock.
-#
-# Two kinds are listed. The first churn by themselves - an SLA recalculation
-# rewrites half of them without a person involved. The second are duplicates
-# or plumbing that would clutter the activity view: incident_state carries the
-# same value as state and would render the change twice, and sys_created_on
-# repeats opened_at.
+# Fields that churn on their own and must never reset the idle clock. An SLA
+# recalculation rewrites most of these without a person being involved, which
+# is the bug this set exists to prevent: a ticket nobody has touched for a
+# week looking freshly worked.
 SYSTEM_NOISE_FIELDS = {
     'sys_updated_on', 'sys_updated_by', 'sys_mod_count', 'business_duration',
     'calendar_duration', 'business_stc', 'calendar_stc', 'time_worked',
-    'sla_due', 'made_sla', 'escalation', 'reassignment_count', 'reopen_count',
+    'sla_due', 'made_sla', 'escalation',
     'activity_due', 'work_start', 'work_end', 'upon_reject', 'upon_approval',
-
-    'incident_state', 'sys_created_on', 'sys_created_by', 'sys_class_name',
-    'sys_domain', 'sys_domain_path', 'sys_tags', 'approval_set',
-    'approval_history', 'task_effective_number', 'order', 'route_reason',
-    'skills', 'knowledge', 'sys_journal_field',
 }
+
+# Worth reading, but not evidence that anybody worked the ticket. Shown in the
+# activity view and excluded from every signal: an incident's channel or its
+# reopen counter moving is a fact about the record, and letting either reset
+# the inactivity clock would hide a stale ticket.
+DISPLAY_ONLY_FIELDS = {
+    'incident_state', 'severity', 'caller_id', 'contact_type', 'opened_at',
+    'reopen_count', 'reassignment_count', 'location', 'business_service',
+    'parent_incident', 'resolved_at', 'resolved_by', 'closed_at', 'closed_by',
+    'u_assigned_region',
+}
+
+# Everything the activity view may show, and nothing else.
+#
+# An allow-list rather than a deny-list, deliberately. ServiceNow audits
+# internal plumbing nobody wants to read - approval sets, domain paths, email
+# sends, journal pointers - and an instance upgrade can introduce more without
+# notice. Under a deny-list each one appears in the panel until somebody
+# notices and adds it; under this list a new field is invisible until it is
+# named here, which is the right way round for a view people are meant to be
+# able to skim.
+READABLE_FIELDS = AGENT_ACTION_FIELDS | DISPLAY_ONLY_FIELDS
 
 CUSTOMER_VISIBLE_FIELDS = {'comments', 'additional_comments'}
 
@@ -130,10 +144,9 @@ def build_timeline(history: List[Dict[str, Any]], caller_name: str,
                    system_accounts: Sequence[str]) -> List[Dict[str, Any]]:
     """Flatten history into a readable, role-tagged activity list.
 
-    Everything that is not known churn is kept, because the ticket page shows
-    the same stream ServiceNow does and a record is misread when a third of
-    its history is missing. Each event is tagged `counts_as_action` so the
-    signal functions can ignore the ones that are only worth reading: the
+    Restricted to READABLE_FIELDS: the standard incident fields a person would
+    recognise, and nothing else. Each event is tagged `counts_as_action` so
+    the signal functions can ignore the ones that are only worth reading - the
     channel an incident arrived through is a fact about the record, not
     somebody working it, and letting it reset the inactivity clock would make
     a stale ticket look freshly handled.
@@ -142,7 +155,7 @@ def build_timeline(history: List[Dict[str, Any]], caller_name: str,
 
     for event in history:
         field = (event.get('field') or '').strip().lower()
-        if not field or field in SYSTEM_NOISE_FIELDS:
+        if field not in READABLE_FIELDS or field in SYSTEM_NOISE_FIELDS:
             continue
 
         actor = (event.get('user_name') or '').strip()

@@ -23,9 +23,13 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from pipeline.signals import build_timeline
+from pipeline.signals import (AGENT_ACTION_FIELDS, DISPLAY_ONLY_FIELDS,
+                              READABLE_FIELDS, SYSTEM_NOISE_FIELDS,
+                              build_timeline)
 from web.activity import (CARD_COMMENT, CARD_FIELD_CHANGES, CARD_WORK_NOTE,
-                          card_kind, field_label, group_activity, initials)
+                          COMMENT_FIELDS, FIELD_LABELS, HIDDEN_FIELDS,
+                          WORK_NOTE_FIELDS, card_kind, field_label,
+                          group_activity, initials)
 
 SYSTEM_ACCOUNTS = ['system', 'guest', 'cac.rest']
 CALLER = 'Emily Nuxoll'
@@ -81,9 +85,9 @@ class TestGrouping:
         card = grouped(creation_history())[0]
         labels = [c['label'] for c in card['changes']]
         assert labels == [
-            'Assigned region', 'Assignment group', 'Caller', 'Category',
-            'Channel', 'Configuration Item', 'Impact', 'Opened', 'Priority',
-            'Short description', 'State', 'Urgency',
+            'Assigned Region', 'Assignment group', 'Caller', 'Category',
+            'Configuration item', 'Contact type', 'Impact', 'Opened',
+            'Priority', 'Short description', 'State', 'Urgency',
         ]
 
     def test_the_description_is_not_listed(self):
@@ -131,6 +135,59 @@ class TestGrouping:
             build_timeline(creation_history(), CALLER, SYSTEM_ACCOUNTS), limit=1)
         assert len(cards) == 1
         assert len(cards[0]['changes']) == 12
+
+
+# ---------------------------------------------------------------------------
+# which fields appear at all
+# ---------------------------------------------------------------------------
+
+class TestAllowList:
+    @pytest.mark.parametrize('field', [
+        'short_description', 'description', 'state', 'incident_state',
+        'priority', 'impact', 'urgency', 'severity', 'assigned_to',
+        'assignment_group', 'category', 'subcategory', 'cmdb_ci', 'caller_id',
+        'contact_type', 'close_code', 'close_notes', 'problem_id', 'rfc',
+        'reopen_count',
+    ])
+    def test_every_standard_incident_field_is_readable(self, field):
+        assert field in READABLE_FIELDS
+
+    @pytest.mark.parametrize('field', [
+        # Email: ServiceNow records sends against the record, and they are
+        # not a change to the incident.
+        'email', 'sys_email', 'notification', 'email_sent',
+        # Plumbing nobody reads.
+        'sys_domain', 'sys_domain_path', 'sys_tags', 'sys_class_name',
+        'approval_set', 'approval_history', 'task_effective_number',
+        'sys_journal_field', 'route_reason', 'order', 'skills',
+        # Churn that must never reach the view or the clock.
+        'sys_mod_count', 'sys_updated_on', 'business_duration', 'sla_due',
+    ])
+    def test_email_and_plumbing_never_appear(self, field):
+        assert field not in READABLE_FIELDS
+        assert grouped([change(field, 'something')]) == []
+
+    def test_an_unknown_field_is_invisible_until_it_is_named(self):
+        """The reason this is an allow-list: an instance upgrade adds columns,
+        and under a deny-list each one appears in the panel unannounced."""
+        assert grouped([change('u_something_new', 'value')]) == []
+
+    def test_the_two_sets_do_not_contradict_each_other(self):
+        """A field in both would be readable and noise at once, and which won
+        would depend on the order of two checks."""
+        assert READABLE_FIELDS & SYSTEM_NOISE_FIELDS == set()
+        assert AGENT_ACTION_FIELDS & DISPLAY_ONLY_FIELDS == set()
+
+    def test_a_counter_is_shown_but_is_not_progress(self):
+        """Reopen count is worth reading and is not somebody working the
+        ticket; if it reset the idle clock a reopened stale incident would
+        read as freshly handled."""
+        timeline = build_timeline([change('reopen_count', '2', old='1')],
+                                  CALLER, SYSTEM_ACCOUNTS)
+        assert len(timeline) == 1
+        assert timeline[0]['counts_as_action'] is False
+        assert grouped([change('reopen_count', '2', old='1')])[0]['changes'][0][
+            'label'] == 'Reopen count'
 
 
 # ---------------------------------------------------------------------------
@@ -227,18 +284,29 @@ class TestValues:
 
 class TestLabels:
     @pytest.mark.parametrize('field,expected', [
-        ('cmdb_ci', 'Configuration Item'),
-        ('contact_type', 'Channel'),
-        ('assignment_group', 'Assignment group'),
-        ('opened_at', 'Opened'),
+        ('cmdb_ci', 'Configuration item'),
+        ('close_code', 'Resolution code'),
+        ('close_notes', 'Resolution notes'),
+        ('incident_state', 'Incident state'),
+        ('reopen_count', 'Reopen count'),
+        ('rfc', 'Change Request'),
+        ('u_assigned_region', 'Assigned Region'),
     ])
     def test_servicenow_labels_are_used_where_they_differ(self, field, expected):
         assert field_label(field) == expected
 
+    def test_every_multi_word_field_has_an_explicit_label(self):
+        """A bare column name reads as a bug to anybody who did not write the
+        schema, so anything with an underscore in it is spelled out. Single
+        words - state, priority - capitalise correctly on their own."""
+        handled = COMMENT_FIELDS | WORK_NOTE_FIELDS | HIDDEN_FIELDS
+        missing = sorted(f for f in READABLE_FIELDS
+                         if '_' in f and f not in FIELD_LABELS and f not in handled)
+        assert missing == []
+
     def test_a_custom_column_loses_its_servicenow_prefix(self):
-        """Every instance carries custom columns and ours are the ones nobody
-        can enumerate in advance, so the fallback matters more than the table."""
-        assert field_label('u_assigned_region') == 'Assigned region'
+        """The fallback for anything not named above - every instance carries
+        custom columns, and ours are the ones nobody can enumerate here."""
         assert field_label('u_business_service') == 'Business service'
 
     def test_a_missing_field_name_does_not_produce_a_blank_label(self):
