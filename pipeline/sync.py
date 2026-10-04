@@ -20,13 +20,20 @@ import json
 from typing import Any, Dict, List, Optional, Tuple
 
 from core.logging_setup import get_logger
-from core.snow.base import display_value, reference_sys_id, utc_ts
+from core.snow.base import display_value, reference_sys_id, utc_ts, utc_value
+from core.snow.incidents import OPEN_STATES
 from core.timeutil import utc_now
 
 log = get_logger('pipeline.sync')
 
 WATERMARK_KEY = 'incident_delta'
 OVERLAP_MINUTES = 5
+
+# The same states the fetch asks for, as a set for membership testing. Derived
+# from OPEN_STATES rather than written out again: two copies of this list would
+# eventually disagree, and the direction of that failure is a resolved ticket
+# sitting on the board.
+OPEN_STATE_VALUES = {s.strip() for s in OPEN_STATES.split(',') if s.strip()}
 
 # How far back the first ever run looks when there is no watermark.
 COLD_START_DAYS = 45
@@ -189,10 +196,35 @@ class TicketSync:
 
     def _retire_closed(self, rows: List[Dict[str, Any]], full: bool,
                        now: datetime.datetime) -> int:
-        """Mark tickets that have left the open set as inactive.
+        """Reconcile tickets that have left the fetch, and retire the departed.
 
-        Only safe after a full sync - a delta response legitimately omits
-        tickets that simply were not touched.
+        This is the only thing standing between the board and a permanently
+        stale row, because a query returns what matches and can never return
+        what stopped matching. Every fetch carries three conditions -
+        active=true, state in 1,2,3, and the group scope - so the instant a
+        ticket is resolved or reassigned out of our queues it simply vanishes
+        from the feed. Nothing updates the local row again, and it sits on the
+        board indefinitely showing the group it used to be in.
+
+        Asking "is it still active?" is not enough to catch that. A ticket
+        drops out for three different reasons and only one of them clears the
+        active flag:
+
+            closed       active=false              -> retire
+            resolved     active usually STAYS true -> retire on state
+            reassigned   active=true, still open   -> retire on group
+
+        Resolved is the one that bites. On most instances `active` is not
+        cleared until auto-close runs days later, so a resolved incident looks
+        open to a flag check and stays on the board for the whole window.
+
+        The row is refreshed from ServiceNow before being retired, so what is
+        left behind records where the ticket actually went rather than the
+        last thing we happened to see.
+
+        Only runs after a full sync - a delta response legitimately omits
+        tickets that simply were not touched, and retiring on that would empty
+        the board every ten minutes.
         """
         if not full:
             return 0
@@ -206,23 +238,70 @@ class TicketSync:
         if not gone:
             return 0
 
-        # Re-check individually rather than assuming: a ticket can drop out of
-        # the query because its group changed, not because it closed.
+        # One read per departed ticket, so the work is bounded by how many
+        # left since the last full sync - normally a handful. The ceiling is
+        # here for the abnormal case: a mistyped group name narrows the fetch
+        # to nothing, every tracked ticket lands in `gone` at once, and this
+        # loop would otherwise issue thousands of calls.
+        ceiling = int(self.settings.get('sync.max_reconcile_per_run', 500) or 500)
+        if len(gone) > ceiling:
+            log.warning('%d tickets left the fetch; reconciling the first %d. '
+                        'Check the configured assignment groups if this repeats.',
+                        len(gone), ceiling)
+            gone = gone[:ceiling]
+
+        tracked_groups = {g.strip().lower()
+                          for g in (self.settings.assignment_groups or []) if g.strip()}
+
         retired = 0
+        unreadable = 0
+
         for number in gone:
             try:
                 current = self.reader.get_by_number(number)
             except Exception:
+                # Cannot tell why it left, so change nothing. Retiring on a
+                # transport error would clear the board during an outage.
+                unreadable += 1
                 continue
 
-            still_open = bool(current) and display_value(
-                current.get('active')).lower() in ('true', '1')
-            if not still_open:
-                self.db.update('watched_ticket', {'active': 0, 'last_synced_at': now},
-                               conditions=[{'col': 'incident_number', 'op': 'eq', 'val': number}])
+            if current is None:
+                # Deleted, or no longer readable by the integration user. Either
+                # way it cannot be reviewed, and leaving it on the board offers
+                # a ticket nobody can open.
+                self._retire(number, now, 'no longer visible in ServiceNow')
                 retired += 1
+                continue
+
+            state = utc_value(current.get('state'))
+            active = utc_value(current.get('active')).strip().lower() in ('true', '1')
+            group = display_value(current.get('assignment_group'))
+
+            # Refresh first, retire second: flatten_incident always writes
+            # active=1, so the order matters, and the stored row should say
+            # where the ticket went.
+            self._persist([current], now)
+
+            if not active or state not in OPEN_STATE_VALUES:
+                self._retire(number, now, f'state={state or "?"} active={active}')
+                retired += 1
+            elif tracked_groups and group.strip().lower() not in tracked_groups:
+                self._retire(number, now, f'reassigned to {group or "an unnamed group"}')
+                retired += 1
+            # Otherwise it is still open and still ours. It fell out of the
+            # fetch for some other reason - most often a full sync whose
+            # windows did not reach it - and the refresh above was the point.
+
+        if unreadable:
+            log.warning('%d departed tickets could not be re-read and were left '
+                        'untouched', unreadable)
 
         return retired
+
+    def _retire(self, number: str, now: datetime.datetime, reason: str) -> None:
+        self.db.update('watched_ticket', {'active': 0, 'last_synced_at': now},
+                       conditions=[{'col': 'incident_number', 'op': 'eq', 'val': number}])
+        log.info('Retired %s from the board: %s', number, reason)
 
     # -- selection for analysis -------------------------------------------
 
