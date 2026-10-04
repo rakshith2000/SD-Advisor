@@ -27,7 +27,7 @@
 {% if row.snoozed %}
 <div class="banner">
   <div>
-    <strong>Snoozed</strong> until {{ snooze.snoozed_until.strftime('%d %b %Y %H:%M') if snooze }}
+    <strong>Snoozed</strong> until {{ snooze.snoozed_until | localdt(with_zone=True) if snooze }}
     {% if snooze and snooze.reason %} &mdash; {{ snooze.reason }}{% endif %}.
     It will not appear in digests until then.
     <form method="post" action="/ticket/{{ row.incident_number }}/unsnooze" style="display:inline;margin-left:8px;">
@@ -46,7 +46,7 @@
         <h2>Suggested next step</h2>
         <span class="sub">
           {% if recommendation.model %}{{ recommendation.model }} &middot; {% endif %}
-          {{ recommendation.created_at.strftime('%d %b %H:%M') if recommendation.created_at else 'not analysed' }}
+          {{ recommendation.created_at | localdt('%d %b %H:%M') if recommendation.created_at else 'not analysed' }}
         </span>
       </div>
       <div class="card-body">
@@ -147,7 +147,7 @@
           {% for event in timeline %}
           <li class="role-{{ event.role }}">
             <div class="meta">
-              {{ event.when }} &middot; {{ event.actor }}
+              {{ event.when | localdt(with_zone=True) }} &middot; {{ event.actor }}
               <span style="text-transform:lowercase;">({{ event.role|lower }})</span>
               &middot; {{ event.kind }}
             </div>
@@ -240,9 +240,9 @@
           <dt>Age</dt><dd class="tnum">{{ row.age_display }}</dd>
           <dt>Idle</dt><dd class="tnum">{{ row.idle_display }}</dd>
           <dt>Last agent action</dt>
-          <dd class="tnum">{{ signal.last_agent_action_at or 'never' }}</dd>
+          <dd class="tnum">{{ (signal.last_agent_action_at | localdt) or 'never' }}</dd>
           <dt>Last caller activity</dt>
-          <dd class="tnum">{{ signal.last_caller_activity_at or 'none' }}</dd>
+          <dd class="tnum">{{ (signal.last_caller_activity_at | localdt) or 'none' }}</dd>
           <dt>SLA</dt>
           <dd>
             {% if signal.sla_breached %}Breached
@@ -250,7 +250,7 @@
             {% else %}No SLA data{% endif %}
           </dd>
           {% if signal.projected_breach_at %}
-          <dt>Breaches at</dt><dd class="tnum">{{ signal.projected_breach_at }}</dd>
+          <dt>Breaches at</dt><dd class="tnum">{{ signal.projected_breach_at | localdt(with_zone=True) }}</dd>
           {% endif %}
           <dt>Follow-ups sent</dt><dd class="tnum">{{ signal.followup_count or 0 }}</dd>
           {% if signal.dependency_ref %}
@@ -274,7 +274,7 @@
           <dt>Priority</dt><dd>{{ ticket.priority }}</dd>
           <dt>Category</dt><dd>{{ ticket.category }} / {{ ticket.subcategory }}</dd>
           <dt>Caller</dt><dd>{{ ticket.caller_name or '-' }}</dd>
-          <dt>Opened</dt><dd class="tnum">{{ ticket.opened_at }}</dd>
+          <dt>Opened</dt><dd class="tnum">{{ ticket.opened_at | localdt(with_zone=True) }}</dd>
         </dl>
       </div>
     </div>
@@ -313,7 +313,7 @@
             <strong>{{ entry.decision|replace('_', ' ')|capitalize }}</strong>
             by {{ entry.user_name }}
           </div>
-          <div class="subtle tnum">{{ entry.created_at.strftime('%d %b %Y %H:%M') }}</div>
+          <div class="subtle tnum">{{ entry.created_at | localdt }}</div>
           {% if entry.comment %}<div class="subtle" style="margin-top:2px;">{{ entry.comment }}</div>{% endif %}
         </div>
         {% endfor %}

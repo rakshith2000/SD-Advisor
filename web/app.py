@@ -17,10 +17,13 @@ from fastapi import BackgroundTasks, Depends, FastAPI, Form, HTTPException, Quer
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from jinja2 import pass_context
 
 from core.context import get_context
 from core.logging_setup import get_logger
-from core.timeutil import utc_now
+from core.timeutil import (DEFAULT_DATETIME_FORMAT, DEFAULT_DISPLAY_TZ,
+                          format_dt, timezone_choices, utc_now,
+                          zone_abbreviation, zone_label)
 from delivery.digest import (ACTION_LABELS, FLAG_LABELS,
                              PENDING_ACTION_OWNER_LABELS, DigestBuilder)
 from delivery.dispatch import Dispatcher
@@ -106,7 +109,40 @@ def create_app(config_path: Optional[str] = None) -> FastAPI:
     STATIC_DIR.mkdir(parents=True, exist_ok=True)
     app.mount('/static', StaticFiles(directory=str(STATIC_DIR)), name='static')
 
+    # -----------------------------------------------------------------
+    # display timezone
+    #
+    # Storage and comparison stay naive UTC everywhere. This is the one place
+    # that is relaxed, at the edge, for a person reading a screen. Conversion
+    # happens in the template filter and nowhere else, so a converted value
+    # can never find its way back into a subtraction or a database write.
+    # -----------------------------------------------------------------
+
+    service_tz = str(ctx.settings.get('display.timezone', DEFAULT_DISPLAY_TZ))
+    datetime_format = str(ctx.settings.get('display.datetime_format',
+                                           DEFAULT_DATETIME_FORMAT))
+    allow_user_tz = bool(ctx.settings.get('display.allow_user_timezone', True))
+    tz_options = timezone_choices(ctx.settings.get('display.timezone_choices', []))
+
+    def tz_for(user: Optional[Dict[str, Any]]) -> str:
+        if allow_user_tz and user and user.get('timezone'):
+            return str(user['timezone'])
+        return service_tz
+
+    @pass_context
+    def localdt(context, value, fmt: Optional[str] = None,
+                with_zone: bool = False) -> str:
+        """Render a stored UTC timestamp in the reader's timezone.
+
+        Takes the zone from the render context rather than an argument, so no
+        template has to thread it through - and so a template that forgets
+        still gets the configured default rather than raw UTC.
+        """
+        return format_dt(value, context.get('display_tz') or service_tz,
+                         fmt or datetime_format, with_zone=with_zone)
+
     templates = Jinja2Templates(directory=str(TEMPLATE_DIR))
+    templates.env.filters['localdt'] = localdt
     templates.env.globals.update({
         'ACTION_LABELS': ACTION_LABELS,
         'FLAG_LABELS': FLAG_LABELS,
@@ -119,6 +155,13 @@ def create_app(config_path: Optional[str] = None) -> FastAPI:
     def render(request: Request, template: str, **context) -> HTMLResponse:
         context.setdefault('user', auth.current_user(request))
         context.setdefault('now', utc_now())
+
+        zone = tz_for(context.get('user'))
+        context.setdefault('display_tz', zone)
+        context.setdefault('display_tz_label', zone_label(zone))
+        context.setdefault('display_tz_abbrev', zone_abbreviation(zone))
+        context.setdefault('timezone_options', tz_options)
+        context.setdefault('allow_user_timezone', allow_user_tz)
 
         # The badge is the reason an access request cannot be lost. Shadow mode
         # suppresses most outbound mail, and an administrator may simply not
@@ -391,6 +434,32 @@ def create_app(config_path: Optional[str] = None) -> FastAPI:
                           opened.get('id'))
 
         return RedirectResponse('/profile?sent=1', status_code=303)
+
+    @app.post('/preferences/timezone')
+    def set_timezone(timezone: str = Form(''),
+                     user: Dict[str, Any] = Depends(require_user)):
+        """Save the reader's display timezone. Posted by the navigation bar.
+
+        A POST rather than a GET because it changes stored state, and
+        SameSite=Lax is what protects it - the same protection every other
+        form here relies on.
+
+        An empty value clears the preference, which is not the same as
+        choosing UTC: it means "follow display.timezone", so the account keeps
+        tracking the service default if that is ever changed.
+        """
+        if not allow_user_tz:
+            raise HTTPException(status_code=404,
+                                detail='Per-user timezones are disabled')
+
+        if not users.set_timezone(user['username'], timezone):
+            raise HTTPException(status_code=400,
+                                detail=f'{timezone[:64]!r} is not a known timezone')
+
+        zone = timezone or service_tz
+        return JSONResponse({'timezone': timezone or None,
+                             'label': zone_label(zone),
+                             'abbreviation': zone_abbreviation(zone)})
 
     @app.post('/profile/request-role/{request_id}/cancel')
     def cancel_role_request(request_id: int,

@@ -203,6 +203,22 @@
         }
     },
 
+    "display": {
+        "_comment": "Presentation only. Everything stored in the database and compared in code is naive UTC - that does not change, and must not: an elapsed time computed between two clocks is wrong in a way nothing reports. This block decides what a human sees, converted once at the edge.",
+        "_comment_tz": "An IANA name, never a fixed offset. America/Chicago is CST for part of the year and CDT for the rest; -06:00 would be an hour out for eight months and the abbreviation beside each timestamp would be wrong. Matches the ServiceNow instance, so a time here reads the same as the same time in ServiceNow.",
+
+        "timezone": "America/Chicago",
+
+        "_comment_user_tz": "Lets each person pick their own zone from the navigation bar, saved against their account the moment they choose. Digests cannot be personalised this way - an email is rendered once for everyone - so they always use the default above and state it in a footer.",
+        "allow_user_timezone": true,
+
+        "_comment_choices": "Added to the built-in list in the dropdown. Either \"Europe/Madrid\" or [\"Europe/Madrid\", \"Spain\"].",
+        "timezone_choices": [],
+
+        "datetime_format": "%d %b %Y %H:%M",
+        "time_format": "%H:%M"
+    },
+
     "runtime": {
         "shadow_mode": true,
         "_comment_shadow": "shadow_mode=true computes and stores everything but sends no email.",

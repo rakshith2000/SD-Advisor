@@ -18,22 +18,46 @@ from jinja2 import Environment, FileSystemLoader, select_autoescape
 from core.logging_setup import get_logger
 from delivery.digest import DigestBuilder
 from delivery.mailer import Mailer
-from core.timeutil import utc_now
+from core.timeutil import (DEFAULT_DATETIME_FORMAT, DEFAULT_DISPLAY_TZ,
+                          format_dt, utc_now, zone_abbreviation, zone_label)
 
 log = get_logger('delivery.dispatch')
 
 TEMPLATE_DIR = Path(__file__).resolve().parent / 'templates'
 
 
-def build_environment() -> Environment:
+def build_environment(settings=None) -> Environment:
+    """Jinja environment for the outbound mail templates.
+
+    An email is rendered once and delivered to everyone on the list, so it
+    cannot follow a per-person timezone the way the board does. It uses the
+    service-wide display.timezone and says so in a footer - a timestamp with
+    no zone beside it is worse than one in the wrong zone, because the reader
+    has no way to tell which they are looking at.
+    """
     env = Environment(
         loader=FileSystemLoader(str(TEMPLATE_DIR)),
         autoescape=select_autoescape(['html', 'xml']),
         trim_blocks=True,
         lstrip_blocks=True,
     )
-    env.filters['datefmt'] = lambda value, fmt='%d %b %Y %H:%M': (
-        value.strftime(fmt) if hasattr(value, 'strftime') else (value or ''))
+
+    zone = DEFAULT_DISPLAY_TZ
+    fmt = DEFAULT_DATETIME_FORMAT
+    if settings is not None:
+        zone = str(settings.get('display.timezone', zone))
+        fmt = str(settings.get('display.datetime_format', fmt))
+
+    # Same name as before so existing templates keep working, but it now
+    # converts out of UTC instead of printing the stored value as-is.
+    env.filters['datefmt'] = lambda value, f=None: format_dt(value, zone, f or fmt)
+    env.filters['localdt'] = env.filters['datefmt']
+
+    env.globals.update({
+        'display_tz': zone,
+        'display_tz_label': zone_label(zone),
+        'display_tz_abbrev': zone_abbreviation(zone),
+    })
     return env
 
 
@@ -44,7 +68,7 @@ class Dispatcher:
         self.db = context.db
         self.builder = DigestBuilder(context)
         self.mailer = Mailer(context.settings, context.vault, context.db)
-        self.env = build_environment()
+        self.env = build_environment(context.settings)
 
     # -- recipients --------------------------------------------------------
 

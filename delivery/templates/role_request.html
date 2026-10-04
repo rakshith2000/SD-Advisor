@@ -62,7 +62,7 @@
       </tr>
       <tr>
         <td style="color:{{ MUTED }};vertical-align:top;">Raised</td>
-        <td>{{ request.created_at|datefmt('%d %b %Y %H:%M') }} UTC</td>
+        <td>{{ request.created_at|datefmt('%d %b %Y %H:%M') }} {{ display_tz_abbrev }}</td>
       </tr>
       <tr>
         <td style="color:{{ MUTED }};vertical-align:top;">Expires</td>

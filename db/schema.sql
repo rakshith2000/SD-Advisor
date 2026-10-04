@@ -298,6 +298,11 @@ CREATE TABLE IF NOT EXISTS advisor_user (
     -- with an approved role request, is never overwritten by a sign-in.
     groups_source     ENUM('MANUAL','REQUEST','SERVICENOW') NOT NULL DEFAULT 'MANUAL',
     assignment_groups TEXT         NULL,
+    -- Presentation only. NULL means "follow display.timezone in conf.json",
+    -- which is why it is not backfilled: a row holding an explicit copy of
+    -- today's default would silently stop following it. IANA names only -
+    -- a fixed offset would be an hour out for eight months of the year.
+    timezone          VARCHAR(64)  NULL,
     active            TINYINT(1)   NOT NULL DEFAULT 1,
     role_changed_at   DATETIME     NULL,
     groups_synced_at  DATETIME     NULL,

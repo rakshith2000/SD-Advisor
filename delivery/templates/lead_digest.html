@@ -133,7 +133,7 @@
     <div style="font:400 12px/1.5 {{ FONT }};color:{{ INK2 }};padding-top:4px;">
       {{ groups|join(', ') if groups else 'All groups' }}
       &middot; tickets open more than {{ aged_after_days }} days
-      &middot; generated {{ generated_at.strftime('%a %d %b %Y, %H:%M') }}
+      &middot; generated {{ generated_at | datefmt('%a %d %b %Y, %H:%M') }} {{ display_tz_abbrev }}
     </div>
     {% if shadow_mode %}
     <div style="margin-top:10px;padding:7px 10px;background:{{ PLANE }};border-left:3px solid {{ WARNING }};
@@ -286,6 +286,10 @@
       Suggestions are advisory and were generated from ticket history, SLA state, past
       resolved incidents and knowledge articles. Nothing has been changed in ServiceNow.
       Marking whether you agree on the board is what tunes the accuracy.
+      <div style="padding-top:8px;">
+        All times shown are <strong>{{ display_tz_label }}</strong>.
+        The board can be switched to your own timezone from the menu bar.
+      </div>
     </div>
   </td></tr>
 

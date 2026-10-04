@@ -68,14 +68,14 @@
 <div class="card">
   <div class="card-head">
     <h2>Request awaiting a decision</h2>
-    <span class="sub">Raised {{ open_request.created_at.strftime('%d %b %Y %H:%M') }} UTC</span>
+    <span class="sub">Raised {{ open_request.created_at | localdt(with_zone=True) }}</span>
   </div>
   <div class="card-body">
     <p>
       You have asked for <strong>{{ open_request.to_role|title }}</strong> on
       {{ open_request.requested_groups }}.
       Administrators have been notified. If nobody decides by
-      {{ open_request.expires_at.strftime('%d %b %Y') }} the request closes
+      {{ open_request.expires_at | localdt('%d %b %Y') }} the request closes
       automatically and you can ask again.
     </p>
     <form method="post" action="/profile/request-role/{{ open_request.id }}/cancel">
@@ -146,13 +146,13 @@
       <tbody>
         {% for row in history %}
         <tr>
-          <td class="tnum">{{ row.created_at.strftime('%d %b %Y') }}</td>
+          <td class="tnum">{{ row.created_at | localdt('%d %b %Y') }}</td>
           <td>{{ row.to_role|title }}<div class="subtle">{{ row.requested_groups or '-' }}</div></td>
           <td>
             <span class="chip {{ 'alert' if row.status == 'REJECTED' }}">{{ row.status|title }}</span>
           </td>
           <td class="tnum">
-            {% if row.decided_at %}{{ row.decided_at.strftime('%d %b %Y') }}
+            {% if row.decided_at %}{{ row.decided_at | localdt('%d %b %Y') }}
               <div class="subtle">{{ row.decided_by or 'automatic' }}</div>
             {% else %}&mdash;{% endif %}
           </td>

@@ -18,7 +18,7 @@
   <div>
     <strong>Already {{ req.status|lower }}</strong>
     {%- if req.decided_by %} by {{ req.decided_by }}{% endif %}
-    {%- if req.decided_at %} on {{ req.decided_at.strftime('%d %b %Y at %H:%M') }} UTC{% endif %}.
+    {%- if req.decided_at %} on {{ req.decided_at | localdt('%d %b %Y at %H:%M', with_zone=True) }}{% endif %}.
     Nothing further to do here.
   </div>
 </div>
@@ -35,8 +35,8 @@
         <tr><td>Change</td>
             <td>{{ req.from_role|title }} &rarr; <strong>{{ req.to_role|title }}</strong></td></tr>
         <tr><td>Queues requested</td><td>{{ req.requested_groups or 'None specified' }}</td></tr>
-        <tr><td>Raised</td><td class="tnum">{{ req.created_at.strftime('%d %b %Y %H:%M') }} UTC</td></tr>
-        <tr><td>Expires</td><td class="tnum">{{ req.expires_at.strftime('%d %b %Y') }}</td></tr>
+        <tr><td>Raised</td><td class="tnum">{{ req.created_at | localdt(with_zone=True) }}</td></tr>
+        <tr><td>Expires</td><td class="tnum">{{ req.expires_at | localdt('%d %b %Y') }}</td></tr>
         <tr><td>Their reason</td>
             <td style="white-space:pre-wrap;">{{ req.justification }}</td></tr>
       </tbody>
@@ -56,7 +56,7 @@
       <tbody>
         {% for row in prior %}
         <tr>
-          <td class="tnum">{{ row.created_at.strftime('%d %b %Y') }}</td>
+          <td class="tnum">{{ row.created_at | localdt('%d %b %Y') }}</td>
           <td class="subtle">{{ row.to_role|title }} &middot; {{ row.requested_groups or '-' }}</td>
           <td><span class="chip {{ 'alert' if row.status in ('REJECTED', 'EXPIRED') }}">
             {{ row.status|title }}</span></td>

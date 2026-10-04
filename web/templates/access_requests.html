@@ -35,14 +35,14 @@
       <tbody>
         {% for row in pending %}
         <tr>
-          <td class="tnum">{{ row.created_at.strftime('%d %b %H:%M') }}</td>
+          <td class="tnum">{{ row.created_at | localdt('%d %b %H:%M') }}</td>
           <td>
             <strong>{{ row.full_name or row.username }}</strong>
             <div class="subtle">{{ row.email or row.username }}</div>
           </td>
           <td>{{ row.from_role|title }} &rarr; <strong>{{ row.to_role|title }}</strong></td>
           <td class="subtle">{{ row.requested_groups or '-' }}</td>
-          <td class="tnum subtle">{{ row.expires_at.strftime('%d %b') }}</td>
+          <td class="tnum subtle">{{ row.expires_at | localdt('%d %b') }}</td>
           <td>
             <a class="btn small" href="/admin/role-requests/{{ row.id }}">Review</a>
           </td>
@@ -69,7 +69,7 @@
         {% for row in recent %}
         <tr>
           <td class="tnum">
-            {{ row.decided_at.strftime('%d %b %Y') if row.decided_at else '-' }}
+            {{ row.decided_at | localdt('%d %b %Y') if row.decided_at else '-' }}
           </td>
           <td>{{ row.full_name or row.username }}</td>
           <td class="subtle">{{ row.from_role|title }} &rarr; {{ row.to_role|title }}</td>

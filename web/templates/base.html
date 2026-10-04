@@ -37,6 +37,29 @@
     </nav>
     <div class="topbar-meta">
       {% if shadow_mode %}<span title="Nothing is being emailed to the wider team">Shadow mode</span>{% endif %}
+
+      {#
+        Every time on this page is rendered in the zone chosen here. Stored
+        values are UTC throughout; this only changes how they are shown.
+        Saved on change - there is no save button because there is nothing
+        else on this control to get wrong.
+      #}
+      {% if allow_user_timezone %}
+      <label class="tz-picker" title="{{ display_tz_label }}">
+        <span class="visually-hidden">Display timezone</span>
+        <select id="tz-select" aria-label="Display timezone"
+                onchange="saveTimezone(this)">
+          {% for option in timezone_options %}
+          <option value="{{ option.name }}" {{ 'selected' if option.name == display_tz }}
+                  title="{{ option.detail }}">{{ option.label }}</option>
+          {% endfor %}
+        </select>
+        <span class="tz-abbrev" id="tz-abbrev">{{ display_tz_abbrev }}</span>
+      </label>
+      {% else %}
+      <span class="tz-abbrev" title="{{ display_tz_label }}">{{ display_tz_abbrev }}</span>
+      {% endif %}
+
       <a href="/profile" class="{{ 'active' if path.startswith('/profile') }}">{{ user.full_name }}</a>
       <button class="theme-toggle" type="button" onclick="toggleTheme()"
               title="Switch between light and dark" aria-label="Switch colour theme">&#9681;</button>
@@ -62,6 +85,37 @@
     var next = current === 'dark' ? 'light' : 'dark';
     root.setAttribute('data-theme', next);
     localStorage.setItem('ata-theme', next);
+  }
+
+  // Saves the choice, then reloads so every timestamp is re-rendered by the
+  // server. Deliberately not done in JavaScript: converting dates in the
+  // browser would mean two independent implementations of the same
+  // conversion, and they would eventually disagree - usually about daylight
+  // saving, and usually on the one day a year anyone would notice.
+  function saveTimezone(select) {
+    var chosen = select.value;
+    var body = new URLSearchParams();
+    body.append('timezone', chosen);
+
+    select.disabled = true;
+    fetch('/preferences/timezone', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: body.toString(),
+      credentials: 'same-origin'
+    }).then(function (response) {
+      if (!response.ok) { throw new Error('HTTP ' + response.status); }
+      window.location.reload();
+    }).catch(function () {
+      select.disabled = false;
+      var abbrev = document.getElementById('tz-abbrev');
+      if (abbrev) {
+        // Say so rather than leaving a dropdown that looks changed but is
+        // not - the page would keep showing the old zone with no explanation.
+        abbrev.textContent = 'not saved';
+        abbrev.classList.add('tz-error');
+      }
+    });
   }
 
   function copyText(id, button) {

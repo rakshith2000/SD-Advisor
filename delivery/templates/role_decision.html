@@ -32,7 +32,7 @@
     </div>
     <div style="font:400 12px/1.5 {{ FONT }};color:{{ INK2 }};padding-top:3px;">
       {{ request.from_role|title }} &rarr; {{ request.to_role|title }},
-      decided {{ request.decided_at|datefmt('%d %b %Y %H:%M') }} UTC
+      decided {{ request.decided_at|datefmt('%d %b %Y %H:%M') }} {{ display_tz_abbrev }}
       {%- if request.decided_by %} by {{ request.decided_by }}{% endif %}.
     </div>
   </td></tr>

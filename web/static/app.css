@@ -298,3 +298,66 @@ table.data td.num, table.data th.num { text-align: right;
 
 .theme-toggle { background: none; border: none; cursor: pointer; padding: 4px;
   color: var(--text-muted); font-size: 15px; line-height: 1; }
+
+/* ---------- timezone picker ---------- */
+/* Every timestamp on the page is rendered in the selected zone. Stored values
+   are UTC throughout; this only changes presentation. Styled to read as part
+   of the meta row rather than as a form control, because it is a view
+   preference, not data entry. */
+
+.tz-picker {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  cursor: pointer;
+}
+
+.tz-picker select {
+  font: 400 12px/1.4 var(--font);
+  color: var(--text-secondary);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  padding: 3px 4px;
+  min-width: 0;
+  max-width: 150px;
+  cursor: pointer;
+}
+
+.tz-picker select:hover {
+  border-color: var(--axis);
+  background: var(--surface-1);
+}
+
+.tz-picker select:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.tz-picker select:disabled { opacity: 0.55; cursor: progress; }
+
+/* The abbreviation changes with the date - CST in January, CDT in July - so
+   it is worth showing beside the selector rather than only in the tooltip. */
+.tz-abbrev {
+  font: 600 11px/1 var(--mono);
+  color: var(--text-muted);
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+.tz-abbrev.tz-error { color: var(--status-critical); }
+
+/* Available to assistive technology, absent from the visual layout. */
+.visually-hidden {
+  position: absolute;
+  width: 1px; height: 1px;
+  padding: 0; margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+@media (max-width: 860px) {
+  .tz-picker select { max-width: 110px; }
+}

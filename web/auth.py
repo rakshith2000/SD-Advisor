@@ -27,7 +27,7 @@ from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 import bcrypt
 
 from core.logging_setup import get_logger
-from core.timeutil import utc_now
+from core.timeutil import is_valid_zone, utc_now
 
 log = get_logger('web.auth')
 
@@ -257,6 +257,10 @@ def _reconcile(request: Request, claims: Dict[str, Any]) -> Dict[str, Any]:
         'email': row.get('email'),
         'groups': [g.strip() for g in (row.get('assignment_groups') or '').split(',')
                    if g.strip()],
+        # None means "follow the configured default" - not UTC. Resolved per
+        # render rather than baked into the session cookie, so a change in the
+        # navigation bar applies to the very next page.
+        'timezone': row.get('timezone') or None,
     }
     request.state.advisor_user = user
     return user
@@ -344,6 +348,31 @@ class UserStore:
         """
         return self.db.query_one(
             'SELECT * FROM advisor_user WHERE username = %s', (username.strip(),))
+
+    def set_timezone(self, username: str, zone: Optional[str]) -> bool:
+        """Record someone's display timezone. Returns False if it was refused.
+
+        Validated against the IANA database rather than against the dropdown,
+        so a zone added to display.timezone_choices works immediately - but a
+        value that cannot be resolved is never stored. An unresolvable zone in
+        this column would be read on every subsequent page render, and while
+        get_zone() falls back rather than raising, persisting a bad value just
+        means the person silently never gets the zone they asked for.
+
+        An empty value clears it, which is not the same as setting UTC: it
+        means "follow the configured default", so the account keeps tracking
+        display.timezone if that is ever changed.
+        """
+        zone = (zone or '').strip()
+
+        if zone and not is_valid_zone(zone):
+            log.warning('Refused an unknown timezone %r for %s', zone[:64], username)
+            return False
+
+        self.db.update('advisor_user', {'timezone': zone or None},
+                       conditions=[{'col': 'username', 'op': 'eq', 'val': username.strip()}])
+        log.info('Display timezone for %s set to %s', username, zone or '(service default)')
+        return True
 
     def active_admins(self) -> List[Dict[str, Any]]:
         return self.db.retrieve('advisor_user', conditions=[

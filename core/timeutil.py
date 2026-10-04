@@ -19,7 +19,14 @@ Conversion to a human timezone happens once, at presentation.
 """
 
 import datetime
+import logging
+import zoneinfo
 from typing import Any, Optional
+
+# Standard library logging rather than core.logging_setup: this module is
+# imported by the pure signal functions, and importing the project's logging
+# configuration from here would tie those to handler setup they do not need.
+log = logging.getLogger('core.timeutil')
 
 TS_FORMAT = '%Y-%m-%d %H:%M:%S'
 
@@ -160,3 +167,167 @@ def format_duration_days(days: Any, zero: str = '0 Mins') -> str:
         return format_duration(float(days) * MINUTES_PER_DAY, zero=zero)
     except (TypeError, ValueError):
         return ''
+
+
+# ---------------------------------------------------------------------------
+# Display timezone
+#
+# Everything above this line, and everything stored anywhere in this service,
+# is naive UTC. That is deliberate and does not change: an elapsed time
+# computed between two values on different clocks is wrong in a way nothing
+# reports, and the only defence is one clock everywhere.
+#
+# This section is the single point where that contract is relaxed - at the
+# edge, for a human reading a screen or an email. Nothing here is ever written
+# back to the database, used in a comparison, or fed into an interval.
+#
+# Zones are IANA names, never fixed offsets. 'America/Chicago' is CST for part
+# of the year and CDT for the rest; a stored -06:00 would silently be an hour
+# out for eight months of every year, and the abbreviation shown beside each
+# timestamp would be a lie.
+# ---------------------------------------------------------------------------
+
+DEFAULT_DISPLAY_TZ = 'America/Chicago'
+DEFAULT_DATETIME_FORMAT = '%d %b %Y %H:%M'
+
+# Offered in the navigation dropdown. A curated list rather than all 598 IANA
+# zones: a long list is harder to use than a short one, and anything missing
+# can be added through display.timezone_choices in conf.json.
+COMMON_TIMEZONES = (
+    ('America/Chicago', 'US Central'),
+    ('America/New_York', 'US Eastern'),
+    ('America/Denver', 'US Mountain'),
+    ('America/Los_Angeles', 'US Pacific'),
+    ('America/Sao_Paulo', 'Brazil'),
+    ('Europe/London', 'UK'),
+    ('Europe/Paris', 'Central Europe'),
+    ('Africa/Johannesburg', 'South Africa'),
+    ('Asia/Dubai', 'Gulf'),
+    ('Asia/Kolkata', 'India'),
+    ('Asia/Singapore', 'Singapore'),
+    ('Asia/Shanghai', 'China'),
+    ('Asia/Tokyo', 'Japan'),
+    ('Australia/Sydney', 'Eastern Australia'),
+    ('UTC', 'UTC'),
+)
+
+
+def get_zone(name: Optional[str]) -> datetime.tzinfo:
+    """Resolve an IANA name, falling back to the default and then to UTC.
+
+    Never raises. A bad zone reaching this point - a stale value in a user
+    row, a typo in conf.json - must degrade to a readable timestamp rather
+    than take out every page that renders a date.
+    """
+    for candidate in (name, DEFAULT_DISPLAY_TZ):
+        if not candidate:
+            continue
+        try:
+            return zoneinfo.ZoneInfo(str(candidate))
+        except Exception:
+            if candidate == name:
+                log.warning('Unknown timezone %r - falling back', candidate)
+    return datetime.timezone.utc
+
+
+def is_valid_zone(name: Optional[str]) -> bool:
+    """Whether a name can be trusted enough to store against an account."""
+    if not name:
+        return False
+    try:
+        zoneinfo.ZoneInfo(str(name))
+        return True
+    except Exception:
+        return False
+
+
+def to_zone(value: Any, zone: Any = None) -> Optional[datetime.datetime]:
+    """Naive UTC (or a parseable string) -> an aware datetime in `zone`."""
+    if value is None or value == '':
+        return None
+
+    if isinstance(value, datetime.datetime):
+        moment = value
+    elif isinstance(value, datetime.date):
+        # A plain date has no time to convert; midnight UTC would shift it
+        # into the previous day for any western zone, which reads as an
+        # off-by-one bug in the audit trail.
+        return None
+    else:
+        moment = parse_ts(value)
+        if moment is None:
+            return None
+
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=datetime.timezone.utc)
+
+    target = zone if isinstance(zone, datetime.tzinfo) else get_zone(zone)
+    return moment.astimezone(target)
+
+
+def format_dt(value: Any, zone: Any = None, fmt: str = DEFAULT_DATETIME_FORMAT,
+              with_zone: bool = False, empty: str = '') -> str:
+    """Render one timestamp for a human, in `zone`.
+
+    with_zone appends the abbreviation in force on that date - CST or CDT,
+    GMT or BST - computed per value rather than per zone, so a January
+    incident and a July one are each labelled correctly.
+    """
+    if isinstance(value, datetime.date) and not isinstance(value, datetime.datetime):
+        return value.strftime(fmt.replace(' %H:%M', '').replace('%H:%M', '').strip())
+
+    moment = to_zone(value, zone)
+    if moment is None:
+        return empty if value in (None, '') else str(value)
+
+    rendered = moment.strftime(fmt)
+    return f'{rendered} {moment.strftime("%Z")}' if with_zone else rendered
+
+
+def zone_abbreviation(zone: Any = None, at: Optional[datetime.datetime] = None) -> str:
+    """'CST' or 'CDT' for the given instant - today's, unless told otherwise."""
+    moment = to_zone(at or utc_now(), zone)
+    return moment.strftime('%Z') if moment else 'UTC'
+
+
+def zone_label(zone: Any = None, at: Optional[datetime.datetime] = None) -> str:
+    """'US Central (CDT, UTC-05:00)' - for the email disclaimer.
+
+    The offset is spelled out because an abbreviation alone is not universally
+    unambiguous: CST is also China Standard Time, eleven hours away from the
+    one meant here.
+    """
+    name = zone if isinstance(zone, str) else getattr(zone, 'key', str(zone))
+    friendly = dict(COMMON_TIMEZONES).get(name, name)
+
+    moment = to_zone(at or utc_now(), zone)
+    if moment is None:
+        return friendly
+
+    offset = moment.utcoffset() or datetime.timedelta(0)
+    total = int(offset.total_seconds())
+    sign = '+' if total >= 0 else '-'
+    hours, minutes = divmod(abs(total) // 60, 60)
+    abbrev = moment.strftime('%Z')
+
+    if name == 'UTC' or (abbrev == 'UTC' and total == 0):
+        return 'UTC'
+    return f'{friendly} ({abbrev}, UTC{sign}{hours:02d}:{minutes:02d})'
+
+
+def timezone_choices(extra: Any = None) -> list:
+    """(iana_name, label) pairs for the dropdown, current offsets included."""
+    pairs = list(COMMON_TIMEZONES)
+
+    for entry in (extra or []):
+        if isinstance(entry, (list, tuple)) and len(entry) == 2:
+            name, label = entry
+        else:
+            name = label = str(entry)
+        if is_valid_zone(name) and name not in dict(pairs):
+            pairs.append((name, label))
+
+    now = utc_now()
+    return [{'name': name, 'label': label,
+             'detail': zone_label(name, at=now)} for name, label in pairs
+            if is_valid_zone(name)]

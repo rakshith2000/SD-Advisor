@@ -38,7 +38,7 @@
       {{ alerts|length }} new risk alert{{ 's' if alerts|length != 1 }}
     </div>
     <div style="font:400 12px/1.5 {{ FONT }};color:{{ INK2 }};padding-top:3px;">
-      Detected {{ generated_at.strftime('%H:%M on %a %d %b') }}. Each ticket alerts once per day.
+      Detected {{ generated_at | datefmt('%H:%M on %a %d %b') }} {{ display_tz_abbrev }}. Each ticket alerts once per day.
     </div>
   </td></tr>
 
@@ -61,7 +61,7 @@
                     font-variant-numeric:tabular-nums;">
           {{ row.assigned_to or 'Unassigned' }} &middot; {{ row.assignment_group or '-' }}
           &middot; score {{ row.attention_score }} &middot; pending action owner: {{ row.pending_action_owner_label }}
-          {%- if row.projected_breach_at %} &middot; breaches {{ row.projected_breach_at.strftime('%d %b %H:%M') if row.projected_breach_at.strftime is defined else row.projected_breach_at }}{% endif %}
+          {%- if row.projected_breach_at %} &middot; breaches {{ row.projected_breach_at | datefmt('%d %b %H:%M') }}{% endif %}
         </div>
       </td>
     </tr></table>
@@ -78,6 +78,10 @@
     {% endif %}
     <div style="font:400 11px/1.6 {{ FONT }};color:{{ MUTED }};padding-top:12px;">
       {% if shadow_mode %}Shadow mode - advisory only. {% endif %}Nothing has been changed in ServiceNow.
+      <div style="padding-top:8px;">
+        All times shown are <strong>{{ display_tz_label }}</strong>.
+        The board can be switched to your own timezone from the menu bar.
+      </div>
     </div>
   </td></tr>
 
