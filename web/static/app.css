@@ -347,7 +347,7 @@ table.data td.num, table.data th.num { text-align: right;
   font: 400 12px/1.4 var(--font);
   color: var(--text-secondary);
   background: transparent;
-  border: 1px solid transparent;
+  border: 1px solid var(--grid);
   border-radius: 4px;
   padding: 3px 4px;
   min-width: 0;
