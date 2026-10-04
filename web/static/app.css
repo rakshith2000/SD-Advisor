@@ -20,8 +20,8 @@
   --grid: #e1e0d9;
   --axis: #c3c2b7;
   --border: rgba(11, 11, 11, 0.10);
-  --logo: url('/static/images/kohler_logo_white.png');
-  --icon: url('/static/images/white.svg');
+  --logo: url('/static/images/kohler_logo_black.png');
+  --icon: url('/static/images/black.svg');
   --accent: #2a78d6;
   --accent-soft: #cde2fb;
 
@@ -47,8 +47,8 @@
     --grid: #2c2c2a;
     --axis: #383835;
     --border: rgba(255, 255, 255, 0.10);
-    --logo: url('/static/images/kohler_logo_black.png');
-    --icon: url('/static/images/black.svg');
+    --logo: url('/static/images/kohler_logo_white.png');
+    --icon: url('/static/images/white.svg');
     --accent: #3987e5;
     --accent-soft: #184f95;
     --success-text: #0ca30c;
