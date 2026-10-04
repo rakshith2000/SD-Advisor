@@ -98,8 +98,14 @@ class DigestBuilder:
             sql += ' AND assignment_group IN (' + ', '.join(['%s'] * len(assignment_groups)) + ')'
             params.extend(assignment_groups)
         if agent:
-            sql += ' AND assigned_to = %s'
-            params.append(agent)
+            # "(unassigned)" is rendered where the underlying column is NULL or an
+            # empty string; treat that label as a request for all such rows rather
+            # than looking for the literal string.
+            if agent == '(unassigned)':
+                sql += ' AND (assigned_to IS NULL OR TRIM(assigned_to) = "")'
+            else:
+                sql += ' AND assigned_to = %s'
+                params.append(agent)
 
         sql += ' ORDER BY attention_score DESC, age_days DESC'
 
