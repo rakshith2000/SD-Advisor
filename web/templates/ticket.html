@@ -151,7 +151,7 @@
               <span style="text-transform:lowercase;">({{ event.role|lower }})</span>
               &middot; {{ event.kind }}
             </div>
-            <div class="body">{{ event.text|truncate(700, true, '...') }}</div>
+            <div class="body">{{ event.text | activity_html }}</div>
           </li>
           {% endfor %}
         </ul>

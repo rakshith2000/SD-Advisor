@@ -120,7 +120,7 @@ a:hover { text-decoration: underline; }
 }
 .brand-icon {
   width: 140px;
-  height: 18px;
+  height: 28px;
   background-image: var(--icon);
 }
 

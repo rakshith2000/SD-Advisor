@@ -18,6 +18,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from jinja2 import pass_context
+from markupsafe import Markup, escape
 
 from core.context import get_context
 from core.logging_setup import get_logger
@@ -142,6 +143,51 @@ def create_app(config_path: Optional[str] = None) -> FastAPI:
                          fmt or datetime_format, with_zone=with_zone)
 
     templates = Jinja2Templates(directory=str(TEMPLATE_DIR))
+
+    def activity_html(value: str) -> Markup:
+        """Render activity text with clickable links.
+
+        Keeps plain text as the source of truth and only adds anchors for
+        detected URLs. ServiceNow history sometimes carries forum-style [code]
+        blocks; these are stripped so only the link remains.
+        """
+        if not value:
+            return Markup('')
+
+        text = str(value)
+
+        # Drop [code]...[/code] markers that ServiceNow wraps around pasted
+        # HTML. The content is still useful as text even when the tags are gone.
+        text = text.replace('[code]', '').replace('[/code]', '')
+
+        # Escape first so any HTML in the comment is shown literally rather than
+        # executed. Anchors we add are Markup-wrapped below.
+        escaped = escape(text)
+
+        # Detect http(s) URLs and bare kb_view.do?... links.
+        import re
+        pattern = re.compile(r"(https?://\S+|\bkb_view\.do\S*)")
+
+        snow_base = str(ctx.settings.get('servicenow.url', '')).rstrip('/')
+
+        def repl(match: 're.Match') -> Markup:
+            url = match.group(0)
+            href = url
+            if href.startswith('kb_view.do') and snow_base:
+                href = snow_base + '/' + href
+            return Markup(f'<a href="{href}" target="_blank" rel="noopener">{escape(url)}</a>')
+
+        parts = []
+        last = 0
+        for m in pattern.finditer(escaped):
+            parts.append(escaped[last:m.start()])
+            parts.append(repl(m))
+            last = m.end()
+        parts.append(escaped[last:])
+
+        return Markup('').join(parts)
+
+    templates.env.filters['activity_html'] = activity_html
     templates.env.filters['localdt'] = localdt
     templates.env.globals.update({
         'ACTION_LABELS': ACTION_LABELS,
