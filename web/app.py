@@ -149,10 +149,13 @@ def create_app(config_path: Optional[str] = None) -> FastAPI:
 
         Keeps plain text as the source of truth and only adds anchors for
         detected URLs. ServiceNow history sometimes carries forum-style [code]
-        blocks; these are stripped so only the link remains.
+        blocks around pasted HTML; those wrappers are removed and only the
+        underlying link text is shown as the clickable label.
         """
         if not value:
             return Markup('')
+
+        import re
 
         text = str(value)
 
@@ -160,32 +163,84 @@ def create_app(config_path: Optional[str] = None) -> FastAPI:
         # HTML. The content is still useful as text even when the tags are gone.
         text = text.replace('[code]', '').replace('[/code]', '')
 
-        # Escape first so any HTML in the comment is shown literally rather than
-        # executed. Anchors we add are Markup-wrapped below.
-        escaped = escape(text)
-
-        # Detect http(s) URLs and bare kb_view.do?... links.
-        import re
-        pattern = re.compile(r"(https?://\S+|\bkb_view\.do\S*)")
-
         snow_base = str(ctx.settings.get('servicenow.url', '')).rstrip('/')
 
-        def repl(match: 're.Match') -> Markup:
-            url = match.group(0)
-            href = url
+        # Pattern for literal <a ...> tags coming from ServiceNow history.
+        anchor_pattern = re.compile(
+            r"<a[^>]*href=['\"](?P<href>[^'\"]+)['\"][^>]*>(?P<label>.*?)</a>",
+            re.IGNORECASE | re.DOTALL,
+        )
+
+        # Pattern for plain URLs in text (no <a> tag), processed in the
+        # segments outside any anchor tags.
+        plain_pattern = re.compile(r"(https?://\S+|\bkb_view\.do\S*)")
+
+        def make_anchor(href: str, label: str) -> Markup:
+            href = (href or '').strip()
+            label = (label or href).strip()
+
             if href.startswith('kb_view.do') and snow_base:
-                href = snow_base + '/' + href
-            return Markup(f'<a href="{href}" target="_blank" rel="noopener">{escape(url)}</a>')
+                href = snow_base + '/' + href.lstrip('/')
 
-        parts = []
+            # Only allow http/https targets; anything else is shown as text.
+            if not (href.startswith('http://') or href.startswith('https://')):
+                return Markup(escape(label))
+
+            return Markup(
+                f'<a href="{escape(href)}" target="_blank" rel="noopener">'
+                f'{escape(label)}</a>'
+            )
+
+        def linkify_plain(segment: str) -> Markup:
+            if not segment:
+                return Markup('')
+
+            parts = []
+            last_index = 0
+            for m in plain_pattern.finditer(segment):
+                if m.start() > last_index:
+                    parts.append(escape(segment[last_index:m.start()]))
+
+                url = m.group(0)
+                href = url
+                if href.startswith('kb_view.do') and snow_base:
+                    href = snow_base + '/' + href.lstrip('/')
+
+                if href.startswith('http://') or href.startswith('https://'):
+                    parts.append(Markup(
+                        f'<a href="{escape(href)}" target="_blank" rel="noopener">'
+                        f'{escape(url)}</a>'
+                    ))
+                else:
+                    parts.append(escape(url))
+
+                last_index = m.end()
+
+            if last_index < len(segment):
+                parts.append(escape(segment[last_index:]))
+
+            return Markup('').join(parts)
+
+        # Walk the string, handling explicit <a> tags first so that their labels
+        # become the clickable text, then linkifying any remaining bare URLs in
+        # the surrounding text.
+        rendered_parts = []
         last = 0
-        for m in pattern.finditer(escaped):
-            parts.append(escaped[last:m.start()])
-            parts.append(repl(m))
-            last = m.end()
-        parts.append(escaped[last:])
+        for m in anchor_pattern.finditer(text):
+            before = text[last:m.start()]
+            if before:
+                rendered_parts.append(linkify_plain(before))
 
-        return Markup('').join(parts)
+            href = m.group('href')
+            label = m.group('label')
+            rendered_parts.append(make_anchor(href, label))
+            last = m.end()
+
+        trailing = text[last:]
+        if trailing:
+            rendered_parts.append(linkify_plain(trailing))
+
+        return Markup('').join(rendered_parts)
 
     templates.env.filters['activity_html'] = activity_html
     templates.env.filters['localdt'] = localdt
