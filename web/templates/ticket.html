@@ -142,19 +142,53 @@
         <span class="sub">Newest first &middot; system noise filtered out</span>
       </div>
       <div class="card-body">
-        {% if timeline %}
-        <ul class="timeline">
-          {% for event in timeline %}
-          <li class="role-{{ event.role }}">
-            <div class="meta">
-              {{ event.when | localdt(with_zone=True) }} &middot; {{ event.actor }}
-              <span style="text-transform:lowercase;">({{ event.role|lower }})</span>
-              &middot; {{ event.kind }}
-            </div>
-            <div class="body">{{ event.text | activity_html }}</div>
-          </li>
+        {#
+          One card per save, not per changed field - ServiceNow writes an
+          audit row for every column, so creating an incident arrives here as
+          a dozen events sharing a timestamp. Grouped in web.activity.
+        #}
+        {% if activity %}
+        <div class="activity">
+          {% for entry in activity %}
+          <article class="activity-card is-{{ entry.kind }}">
+            <header class="activity-head">
+              <span class="activity-who">
+                <span class="activity-avatar" aria-hidden="true">{{ entry.initials }}</span>
+                <span class="activity-actor">{{ entry.actor }}</span>
+              </span>
+              <span class="activity-when">
+                <span class="activity-label">{{ entry.label }}</span>
+                <span aria-hidden="true">&middot;</span>
+                {{ entry.when | localdt('%Y-%m-%d %H:%M:%S', with_zone=True) }}
+              </span>
+            </header>
+
+            {% if entry.kind == 'field_changes' %}
+            <dl class="activity-fields">
+              {% for change in entry.changes %}
+              <dt>{{ change.label }}</dt>
+              <dd>
+                {%- if change.is_timestamp -%}
+                  {{ change.value | localdt('%Y-%m-%d %H:%M:%S') }}
+                {%- else -%}
+                  {{ change.value or '(empty)' }}
+                {%- endif -%}
+                {% if change.previous %}
+                <span class="activity-was">was
+                  {%- if change.previous_is_timestamp %}
+                  {{ change.previous | localdt('%Y-%m-%d %H:%M:%S') }}
+                  {%- else %} {{ change.previous }}{% endif -%}
+                </span>
+                {% endif %}
+              </dd>
+              {% endfor %}
+            </dl>
+            {% else %}
+            <div class="activity-text">{{ entry.text | activity_html }}</div>
+            {% endif %}
+          </article>
           {% endfor %}
-        </ul>
+        </div>
         {% else %}
         <p class="subtle">No activity could be loaded from ServiceNow.</p>
         {% endif %}

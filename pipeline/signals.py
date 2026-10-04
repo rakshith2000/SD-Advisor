@@ -45,7 +45,10 @@ PENDING_ACTION_OWNERS = (
     SERVICE_DESK, 'CALLER', 'VENDOR', 'CHANGE', 'PROBLEM', 'APPROVAL',
 )
 
-# History fields that represent a human progressing the ticket.
+# History fields that represent a human progressing the ticket. Membership of
+# this set is what resets the inactivity clock, so it is deliberately narrow:
+# a field that changes without anybody working the incident does not belong
+# here, however interesting it is to read.
 AGENT_ACTION_FIELDS = {
     'work_notes', 'comments', 'additional_comments', 'state', 'assigned_to',
     'assignment_group', 'hold_reason', 'priority', 'impact', 'urgency',
@@ -54,11 +57,22 @@ AGENT_ACTION_FIELDS = {
 }
 
 # Fields that churn on their own and must never reset the idle clock.
+#
+# Two kinds are listed. The first churn by themselves - an SLA recalculation
+# rewrites half of them without a person involved. The second are duplicates
+# or plumbing that would clutter the activity view: incident_state carries the
+# same value as state and would render the change twice, and sys_created_on
+# repeats opened_at.
 SYSTEM_NOISE_FIELDS = {
     'sys_updated_on', 'sys_updated_by', 'sys_mod_count', 'business_duration',
     'calendar_duration', 'business_stc', 'calendar_stc', 'time_worked',
     'sla_due', 'made_sla', 'escalation', 'reassignment_count', 'reopen_count',
     'activity_due', 'work_start', 'work_end', 'upon_reject', 'upon_approval',
+
+    'incident_state', 'sys_created_on', 'sys_created_by', 'sys_class_name',
+    'sys_domain', 'sys_domain_path', 'sys_tags', 'approval_set',
+    'approval_history', 'task_effective_number', 'order', 'route_reason',
+    'skills', 'knowledge', 'sys_journal_field',
 }
 
 CUSTOMER_VISIBLE_FIELDS = {'comments', 'additional_comments'}
@@ -116,15 +130,19 @@ def build_timeline(history: List[Dict[str, Any]], caller_name: str,
                    system_accounts: Sequence[str]) -> List[Dict[str, Any]]:
     """Flatten history into a readable, role-tagged activity list.
 
-    Only communication and state-changing events are kept - the raw history is
-    mostly field churn nobody needs to read.
+    Everything that is not known churn is kept, because the ticket page shows
+    the same stream ServiceNow does and a record is misread when a third of
+    its history is missing. Each event is tagged `counts_as_action` so the
+    signal functions can ignore the ones that are only worth reading: the
+    channel an incident arrived through is a fact about the record, not
+    somebody working it, and letting it reset the inactivity clock would make
+    a stale ticket look freshly handled.
     """
-    interesting = AGENT_ACTION_FIELDS
     timeline: List[Dict[str, Any]] = []
 
     for event in history:
         field = (event.get('field') or '').strip().lower()
-        if field in SYSTEM_NOISE_FIELDS or field not in interesting:
+        if not field or field in SYSTEM_NOISE_FIELDS:
             continue
 
         actor = (event.get('user_name') or '').strip()
@@ -136,6 +154,7 @@ def build_timeline(history: List[Dict[str, Any]], caller_name: str,
                 continue
             kind = 'customer comment' if field in CUSTOMER_VISIBLE_FIELDS else 'work note'
             text = new_value
+            old_value = ''
         else:
             old_value = str(event.get('old') or '').strip()
             if old_value == new_value:
@@ -143,6 +162,9 @@ def build_timeline(history: List[Dict[str, Any]], caller_name: str,
             kind = f'{field} changed'
             text = f'{old_value or "(empty)"} -> {new_value or "(empty)"}'
 
+        # `old` and `new` are carried alongside `text` so a presentation layer
+        # can lay the two out itself - the arrow string is one rendering of a
+        # change, not the only one, and parsing it back would be fragile.
         timeline.append({
             'when': event.get('update_time') or '',
             'actor': actor or 'system',
@@ -150,6 +172,9 @@ def build_timeline(history: List[Dict[str, Any]], caller_name: str,
             'field': field,
             'kind': kind,
             'text': text,
+            'old': old_value,
+            'new': new_value,
+            'counts_as_action': field in AGENT_ACTION_FIELDS,
         })
 
     timeline.sort(key=lambda e: e['when'])
@@ -160,9 +185,21 @@ def build_timeline(history: List[Dict[str, Any]], caller_name: str,
 # individual signals
 # ---------------------------------------------------------------------------
 
+def action_events(timeline: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """The subset of the timeline that represents somebody working the ticket.
+
+    The timeline carries everything readable; the signals are computed from
+    this narrower view. Events predating the `counts_as_action` tag default to
+    True so an older cached timeline is read the way it was written.
+    """
+    return [e for e in timeline if e.get('counts_as_action', True)]
+
+
 def last_meaningful_agent_action(timeline: List[Dict[str, Any]]) -> Optional[datetime.datetime]:
     for event in reversed(timeline):
         if event['role'] != AGENT_ROLE:
+            continue
+        if not event.get('counts_as_action', True):
             continue
         if event['field'] in SYSTEM_NOISE_FIELDS:
             continue
@@ -174,10 +211,13 @@ def last_meaningful_agent_action(timeline: List[Dict[str, Any]]) -> Optional[dat
 
 def last_caller_activity(timeline: List[Dict[str, Any]]) -> Optional[datetime.datetime]:
     for event in reversed(timeline):
-        if event['role'] == CALLER_ROLE:
-            stamp = parse_ts(event['when'])
-            if stamp:
-                return stamp
+        if event['role'] != CALLER_ROLE:
+            continue
+        if not event.get('counts_as_action', True):
+            continue
+        stamp = parse_ts(event['when'])
+        if stamp:
+            return stamp
     return None
 
 
@@ -311,6 +351,11 @@ def extract_signals(ticket: Dict[str, Any], history: List[Dict[str, Any]],
     caller_name = ticket.get('caller_name') or ''
 
     timeline = build_timeline(history, caller_name, system_accounts)
+    # Every signal below is computed from the narrower view. The full timeline
+    # exists for the ticket page; feeding read-only field changes into the
+    # prompt would spend tokens on facts the model cannot act on and would
+    # change input_hash for every ticket at once.
+    actions = action_events(timeline)
 
     opened_at = parse_ts(ticket.get('opened_at')) or now
     agent_action_at = last_meaningful_agent_action(timeline)
@@ -327,9 +372,9 @@ def extract_signals(ticket: Dict[str, Any], history: List[Dict[str, Any]],
     dependency = evaluate_dependency(ticket, change_record, problem_record)
 
     pending_action_owner = determine_pending_action_owner(
-        ticket, timeline, caller_replied_unanswered, dependency['dependency_resolved'])
+        ticket, actions, caller_replied_unanswered, dependency['dependency_resolved'])
 
-    followup_count, last_followup_at = count_followups(timeline)
+    followup_count, last_followup_at = count_followups(actions)
 
     age_days = _days_between(now, opened_at) or 0.0
     idle_days = _days_between(now, idle_from) or 0.0
@@ -340,7 +385,7 @@ def extract_signals(ticket: Dict[str, Any], history: List[Dict[str, Any]],
     age_minutes = minutes_between(now, opened_at) or 0
     idle_minutes = minutes_between(now, idle_from) or 0
 
-    state_changes = [e for e in timeline if e['field'] == 'state']
+    state_changes = [e for e in actions if e['field'] == 'state']
     state_since = parse_ts(state_changes[-1]['when']) if state_changes else opened_at
     days_in_state = _days_between(now, state_since) or age_days
 
@@ -391,7 +436,7 @@ def extract_signals(ticket: Dict[str, Any], history: List[Dict[str, Any]],
         'kb_available': bool(kb_available),
         'kb_attached': bool(attached_kb),
 
-        '_timeline': timeline,
+        '_timeline': actions,
     }
 
     signals['risk_flags'] = derive_risk_flags(signals, thresholds)

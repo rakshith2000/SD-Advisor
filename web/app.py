@@ -33,6 +33,7 @@ from pipeline.scoring import DEFAULT_WEIGHTS
 from web import auth
 from web.access import (ALREADY_DECIDED, NOT_FOUND, REFUSED,
                         AccessRequestError, RoleRequestService)
+from web.activity import group_activity
 from web.auth import (SessionManager, UserStore, require_admin, require_lead,
                       require_user, require_write, safe_next)
 from web.oidc import ID_TOKEN_COOKIE, STATE_COOKIE, OIDCError, OIDCProvider
@@ -739,7 +740,7 @@ def create_app(config_path: Optional[str] = None) -> FastAPI:
                       row=decorated, ticket=ticket, signal=signal,
                       breakdown=breakdown, recommendation=recommendation,
                       evidence=evidence, feedback=feedback,
-                      timeline=list(reversed(timeline))[:60], snooze=snooze,
+                      activity=group_activity(timeline), snooze=snooze,
                       snow_url=str(ctx.settings.get('servicenow.url', '')).rstrip('/'))
 
     # -----------------------------------------------------------------

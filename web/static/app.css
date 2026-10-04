@@ -296,20 +296,70 @@ table.data td.num, table.data th.num { text-align: right;
 }
 .draft.caller { border-left-color: var(--accent); }
 
-.timeline { list-style: none; margin: 0; padding: 0; }
-.timeline li { padding: 9px 0 9px 14px; border-left: 2px solid var(--grid);
-  position: relative; font-size: 13px; }
-.timeline li::before {
-  content: ''; position: absolute; left: -5px; top: 14px;
-  width: 8px; height: 8px; border-radius: 50%;
-  background: var(--text-muted); border: 2px solid var(--surface-1);
+/* ---------- activity stream ----------
+   One card per save, matching how ServiceNow groups its own activity. The
+   left edge carries the kind: blue for what the caller can see, amber for
+   internal work notes, grey for field changes. The written label in the
+   header carries the same thing, so the colour is reinforcement and never
+   the only cue. */
+
+.activity { display: flex; flex-direction: column; gap: 10px; }
+
+.activity-card {
+  background: var(--surface-1);
+  border: 1px solid var(--grid);
+  border-left: 3px solid var(--axis);
+  border-radius: var(--radius);
+  padding: 11px 14px 12px;
 }
-.timeline li.role-AGENT::before { background: var(--accent); }
-.timeline li.role-CALLER::before { background: var(--status-serious); }
-.timeline .meta { font-size: 11px; color: var(--text-muted);
-  font-variant-numeric: tabular-nums; }
-.timeline .body { color: var(--text-secondary); margin-top: 2px;
-  white-space: pre-wrap; word-break: break-word; }
+.activity-card.is-comment   { border-left-color: var(--accent); }
+.activity-card.is-work_note { border-left-color: var(--status-warning); }
+
+.activity-head {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; flex-wrap: wrap; margin-bottom: 7px;
+}
+.activity-who { display: inline-flex; align-items: center; gap: 7px; min-width: 0; }
+.activity-avatar {
+  width: 22px; height: 22px; border-radius: 999px; flex: none;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--plane); border: 1px solid var(--grid);
+  font: 600 10px/1 var(--font); color: var(--text-secondary);
+  letter-spacing: 0.02em;
+}
+.activity-actor {
+  font-weight: 600; font-size: 13px; color: var(--text-primary);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.activity-when {
+  font-size: 11.5px; color: var(--text-muted);
+  font-variant-numeric: tabular-nums; white-space: nowrap;
+}
+.activity-label { color: var(--text-secondary); font-weight: 500; }
+
+/* Two columns on anything wider than a phone, one below - a label stacked on
+   its value stays readable, a truncated value does not. */
+.activity-fields {
+  display: grid; grid-template-columns: 170px minmax(0, 1fr);
+  gap: 3px 14px; margin: 0; font-size: 13px;
+}
+.activity-fields dt {
+  color: var(--text-secondary); font-weight: 600; text-align: right;
+}
+.activity-fields dd {
+  margin: 0; color: var(--text-primary); min-width: 0; overflow-wrap: anywhere;
+}
+.activity-was { color: var(--text-muted); font-size: 11.5px; margin-left: 6px; }
+
+.activity-text {
+  color: var(--text-primary); font-size: 13px; line-height: 1.55;
+  white-space: pre-wrap; overflow-wrap: anywhere;
+}
+
+@media (max-width: 620px) {
+  .activity-fields { grid-template-columns: 1fr; gap: 0 0; }
+  .activity-fields dt { text-align: left; padding-top: 6px; }
+}
 
 /* ---------- login ---------- */
 
