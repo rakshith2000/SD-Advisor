@@ -60,10 +60,34 @@
       <span class="tz-abbrev" title="{{ display_tz_label }}">{{ display_tz_abbrev }}</span>
       {% endif %}
 
-      <a href="/profile" class="{{ 'active' if path.startswith('/profile') }}">{{ user.full_name }}</a>
-      <button class="theme-toggle" type="button" onclick="toggleTheme()"
-              title="Switch between light and dark" aria-label="Switch colour theme">&#9681;</button>
-      <a href="/logout">Sign out</a>
+      <div class="account">
+        <button class="account-trigger" type="button"
+                aria-haspopup="true" aria-expanded="false"
+                onclick="toggleAccountMenu(this)"
+                title="{{ user.full_name or user.username }}">
+          <span class="avatar-initial">
+            {{ (user.full_name or user.username or 'U')[:1] }}
+          </span>
+        </button>
+        <div class="account-popup" role="menu">
+          <div class="account-header">
+            <div class="account-name">{{ user.full_name or user.username }}</div>
+          </div>
+          <a href="/profile"
+             class="account-item"
+             role="menuitem">Profile</a>
+          <button type="button"
+                  class="account-item"
+                  role="menuitem"
+                  onclick="toggleTheme(); closeAccountMenu();">
+            <span>Theme</span>
+            <span class="account-item-note">Toggle light/dark</span>
+          </button>
+          <a href="/logout"
+             class="account-item account-item-danger"
+             role="menuitem">Sign out</a>
+        </div>
+      </div>
     </div>
   </div>
 </header>
@@ -85,6 +109,29 @@
     var next = current === 'dark' ? 'light' : 'dark';
     root.setAttribute('data-theme', next);
     localStorage.setItem('ata-theme', next);
+  }
+
+  function toggleAccountMenu(button) {
+    var container = button.parentNode;
+    if (!container) { return; }
+    var expanded = button.getAttribute('aria-expanded') === 'true';
+    if (expanded) {
+      button.setAttribute('aria-expanded', 'false');
+      container.classList.remove('is-open');
+    } else {
+      button.setAttribute('aria-expanded', 'true');
+      container.classList.add('is-open');
+    }
+  }
+
+  function closeAccountMenu() {
+    var container = document.querySelector('.account.is-open');
+    if (!container) { return; }
+    var button = container.querySelector('.account-trigger');
+    if (button) {
+      button.setAttribute('aria-expanded', 'false');
+    }
+    container.classList.remove('is-open');
   }
 
   // Saves the choice, then reloads so every timestamp is re-rendered by the

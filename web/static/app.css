@@ -299,6 +299,37 @@ table.data td.num, table.data th.num { text-align: right;
 .theme-toggle { background: none; border: none; cursor: pointer; padding: 4px;
   color: var(--text-muted); font-size: 15px; line-height: 1; }
 
+.account { position: relative; }
+.account-trigger {
+  width: 28px; height: 28px; border-radius: 999px;
+  border: 1px solid var(--axis); background: var(--plane);
+  padding: 0; display: inline-flex; align-items: center; justify-content: center;
+  color: var(--accent); font-weight: 600; font-size: 13px; cursor: pointer;
+}
+.account-trigger:hover { background: var(--surface-1); }
+.avatar-initial { text-transform: uppercase; }
+.account-popup {
+  position: absolute; right: 0; top: 34px; min-width: 190px;
+  background: var(--surface-1); border: 1px solid var(--grid);
+  border-radius: var(--radius); box-shadow: 0 4px 16px rgba(0, 0, 0, 0.16);
+  padding: 8px 0; display: none; z-index: 30;
+}
+.account.is-open .account-popup { display: block; }
+.account-header {
+  padding: 6px 16px 8px; border-bottom: 1px solid var(--grid);
+}
+.account-name { font-size: 13px; font-weight: 600; color: var(--text-primary); }
+.account-item {
+  width: 100%; text-align: left; padding: 8px 16px;
+  font: 400 13px/1.5 var(--font); color: var(--text-primary);
+  background: transparent; border: 0; display: flex;
+  align-items: center; justify-content: space-between; gap: 8px;
+  text-decoration: none; cursor: pointer;
+}
+.account-item:hover { background: var(--plane); text-decoration: none; }
+.account-item-note { font-size: 11px; color: var(--text-muted); }
+.account-item-danger { color: var(--status-critical); }
+
 /* ---------- timezone picker ---------- */
 /* Every timestamp on the page is rendered in the selected zone. Stored values
    are UTC throughout; this only changes presentation. Styled to read as part
