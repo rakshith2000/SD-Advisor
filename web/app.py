@@ -11,7 +11,7 @@ import json
 import secrets
 from pathlib import Path
 from typing import Any, Dict, List, Optional
-from urllib.parse import quote
+from urllib.parse import quote, urlencode
 
 from fastapi import BackgroundTasks, Depends, FastAPI, Form, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
@@ -43,6 +43,126 @@ log = get_logger('web.app')
 WEB_DIR = Path(__file__).resolve().parent
 TEMPLATE_DIR = WEB_DIR / 'templates'
 STATIC_DIR = WEB_DIR / 'static'
+
+# -----------------------------------------------------------------------
+# Board sorting
+#
+# Each column sorts on the STORED value, never the rendered one. age_display
+# reads '10 Days 12 Hrs' and idle_display '2 Days', so sorting the text puts
+# 2 Days after 10 Days - a table that looks sorted and is not, which is worse
+# than one that is obviously unsorted. The minute columns exist for exactly
+# this reason.
+#
+# An allow-list rather than accepting a column name from the query string:
+# these values reach a sort key, not SQL, but a board that can be pointed at
+# any field by URL is a board whose behaviour is not reviewable.
+# -----------------------------------------------------------------------
+
+BOARD_SORTS: Dict[str, Dict[str, Any]] = {
+    'score':      {'field': 'attention_score',           'kind': 'num',  'label': 'attention score'},
+    'ticket':     {'field': 'incident_number',           'kind': 'text', 'label': 'ticket number'},
+    'agent':      {'field': 'assigned_to',               'kind': 'text', 'label': 'assignee'},
+    'group':      {'field': 'assignment_group',          'kind': 'text', 'label': 'queue'},
+    'age':        {'field': 'age_minutes',               'kind': 'num',  'label': 'age'},
+    'idle':       {'field': 'idle_minutes',              'kind': 'num',  'label': 'idle time'},
+    'owner':      {'field': 'pending_action_owner_label', 'kind': 'text', 'label': 'who is blocking'},
+    'action':     {'field': 'action_label',              'kind': 'text', 'label': 'suggested step'},
+    'confidence': {'field': 'confidence',                'kind': 'num',  'label': 'confidence'},
+}
+DEFAULT_SORT = 'score'
+DEFAULT_DIRECTION = 'desc'
+
+
+def normalise_sort(sort: Optional[str], direction: Optional[str]) -> tuple:
+    """Clamp the query string to something sortable. Never raises.
+
+    A stale bookmark or a hand-edited URL falls back to the default ranking
+    rather than erroring: the board is the first page most people open, and
+    failing it over a sort preference would be out of proportion.
+    """
+    key = (sort or '').strip().lower()
+    if key not in BOARD_SORTS:
+        key = DEFAULT_SORT
+    way = (direction or '').strip().lower()
+    if way not in ('asc', 'desc'):
+        way = DEFAULT_DIRECTION
+    return key, way
+
+
+def direction_phrase(sort: str, direction: str) -> str:
+    """How to describe an order in words.
+
+    'Lowest first' is right for a score and wrong for a name, and a label that
+    reads oddly is a label people stop reading.
+    """
+    spec = BOARD_SORTS.get(sort) or BOARD_SORTS[DEFAULT_SORT]
+    if spec['kind'] == 'num':
+        return 'highest first' if direction == 'desc' else 'lowest first'
+    return 'Z to A' if direction == 'desc' else 'A to Z'
+
+
+def sort_board(rows: List[Dict[str, Any]], sort: str, direction: str) -> List[Dict[str, Any]]:
+    """Order the board by one column, preserving the ranking as the tiebreak.
+
+    Stable on purpose. Rows the chosen column cannot separate - every ticket
+    with the same assignee, say - keep the order the query gave them, which is
+    score then age. An unstable sort would reshuffle those rows between page
+    loads and make a lead lose their place in a list they are working down.
+    """
+    spec = BOARD_SORTS.get(sort) or BOARD_SORTS[DEFAULT_SORT]
+    field, kind = spec['field'], spec['kind']
+
+    if kind == 'num':
+        def key(row: Dict[str, Any]) -> float:
+            try:
+                return float(row.get(field) or 0)
+            except (TypeError, ValueError):
+                # A value that will not become a number sorts as zero rather
+                # than taking out the whole page.
+                return 0.0
+    else:
+        def key(row: Dict[str, Any]) -> str:
+            return str(row.get(field) or '').casefold()
+
+    return sorted(rows, key=key, reverse=(direction == 'desc'))
+
+
+def sort_links(filters: Dict[str, Any], sort: str, direction: str) -> Dict[str, Dict[str, Any]]:
+    """Header links, each carrying every active filter forward.
+
+    Built here rather than in the template because a sort link that dropped a
+    filter would hand the reader a different board from the one they were
+    reading, while looking like it had only changed the order.
+    """
+    carried: Dict[str, Any] = {}
+    for name, value in (filters or {}).items():
+        if value in (None, '', False, 0):
+            continue
+        carried[name] = 'true' if value is True else value
+
+    links: Dict[str, Dict[str, Any]] = {
+        # The way back to the default ranking, with the filters intact. Built
+        # alongside the column links rather than assembled in the template,
+        # for the same reason.
+        '_default': {'url': '/board?' + urlencode(
+            dict(carried, sort=DEFAULT_SORT, dir=DEFAULT_DIRECTION))},
+    }
+    for key in BOARD_SORTS:
+        active = key == sort
+        # Descending on the first click. For score, age and idle the end worth
+        # reading is the top, and an ascending first click would open a page
+        # whose entire purpose is the worst tickets on the calmest ones.
+        nxt = 'asc' if (active and direction == 'desc') else 'desc'
+        links[key] = {
+            'url': '/board?' + urlencode(dict(carried, sort=key, dir=nxt)),
+            'active': active,
+            'direction': direction if active else '',
+            'indicator': ('▼' if direction == 'desc' else '▲') if active else '',
+            'next': nxt,
+            'label': BOARD_SORTS[key]['label'],
+            'next_phrase': direction_phrase(key, nxt),
+        }
+    return links
 
 
 def _session_secret(ctx) -> str:
@@ -664,7 +784,9 @@ def create_app(config_path: Optional[str] = None) -> FastAPI:
               flag: Optional[str] = None,
               action: Optional[str] = None,
               min_score: int = 0,
-              show_snoozed: bool = False):
+              show_snoozed: bool = False,
+              sort: str = DEFAULT_SORT,
+              direction: str = Query(DEFAULT_DIRECTION, alias='dir')):
 
         all_groups = ctx.known_assignment_groups()
         visible = users.visible_groups(user, all_groups)
@@ -684,17 +806,33 @@ def create_app(config_path: Optional[str] = None) -> FastAPI:
         if action:
             rows = [r for r in rows if r.get('recommended_action') == action]
 
+        # Summary and movement are computed from the filtered set and do not
+        # depend on its order, so they are taken before sorting - re-sorting
+        # cannot change a count, and computing them twice would invite one of
+        # the two to drift.
         summary = builder.summarise(rows)
         movement = builder.movement_since(rows)
+
+        sort, direction = normalise_sort(sort, direction)
+        filters = {'group': group, 'agent': agent, 'ball': ball,
+                   'flag': flag, 'action': action,
+                   'min_score': min_score, 'show_snoozed': show_snoozed}
+        rows = sort_board(rows, sort, direction)
+        links = sort_links(filters, sort, direction)
 
         return render(request, 'board.html',
                       rows=rows, summary=summary, movement=movement,
                       all_groups=all_groups, visible_groups=visible,
                       no_scope=not visible,
                       agents=sorted({r['assigned_to'] for r in rows if r.get('assigned_to')}),
-                      filters={'group': group, 'agent': agent, 'ball': ball,
-                               'flag': flag, 'action': action,
-                               'min_score': min_score, 'show_snoozed': show_snoozed})
+                      sort=sort, direction=direction,
+                      sort_label=BOARD_SORTS[sort]['label'],
+                      sort_phrase=direction_phrase(sort, direction),
+                      sort_links=links,
+                      default_sort=(sort == DEFAULT_SORT
+                                    and direction == DEFAULT_DIRECTION),
+                      default_sort_url=links['_default']['url'],
+                      filters=filters)
 
     # -----------------------------------------------------------------
     # ticket detail

@@ -238,6 +238,28 @@ table.data td {
   vertical-align: top; font-size: 13px;
 }
 table.data tbody tr:hover { background: var(--plane); }
+
+/* Sortable headings. The active column is marked by weight, an underline and
+   an arrow together - colour alone would not survive a greyscale print or a
+   reader who cannot distinguish it. */
+table.data th.sortable { padding: 0; }
+table.data th.sortable > a {
+  display: block; padding: 10px 12px; color: var(--text-muted);
+  font: inherit; text-transform: inherit; letter-spacing: inherit;
+  white-space: nowrap;
+}
+table.data th.sortable > a:hover {
+  color: var(--text-primary); background: var(--plane); text-decoration: none;
+}
+table.data th.sortable > a:focus-visible {
+  outline: 2px solid var(--accent); outline-offset: -2px;
+}
+table.data th.sortable.num > a { text-align: right; }
+table.data th.sortable.is-sorted > a {
+  color: var(--text-primary);
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
+.sort-indicator { font-size: 9px; margin-left: 4px; color: var(--accent); }
 table.data td.num, table.data th.num { text-align: right;
   font-variant-numeric: tabular-nums; white-space: nowrap; }
 .tnum { font-variant-numeric: tabular-nums; }

@@ -9,6 +9,25 @@
 </div>
 {% endmacro %}
 
+{#
+  A sortable column heading. The link is built server-side so it carries
+  every active filter forward - a sort that quietly dropped the queue filter
+  would show a different board while looking like it had only reordered one.
+  aria-sort is set so the current order is announced rather than conveyed by
+  the arrow alone.
+#}
+{% macro sortable(key, label, numeric=False) %}
+{% set link = sort_links[key] %}
+<th class="{{ 'num' if numeric }} sortable {{ 'is-sorted' if link.active }}"
+    {% if link.active %}aria-sort="{{ 'descending' if link.direction == 'desc' else 'ascending' }}"{% endif %}>
+  <a href="{{ link.url }}"
+     title="Sort by {{ link.label }}, {{ link.next_phrase }}">
+    {{- label -}}
+    <span class="sort-indicator" aria-hidden="true">{{ link.indicator }}</span>
+  </a>
+</th>
+{% endmacro %}
+
 {% block content %}
 
 <div class="page-head">
@@ -75,6 +94,11 @@
 {% endif %}
 
 <form class="filters" method="get" action="/board">
+  {# Carried so that applying a filter does not silently reset the order the
+     reader chose. Reset, below, deliberately clears both. #}
+  <input type="hidden" name="sort" value="{{ sort }}">
+  <input type="hidden" name="dir" value="{{ direction }}">
+
   <div class="field">
     <label for="group">Group</label>
     <select id="group" name="group">
@@ -143,7 +167,12 @@
 <div class="card">
   <div class="card-head">
     <h2>{{ rows|length }} ticket{{ 's' if rows|length != 1 }}</h2>
-    <span class="sub">Highest attention score first</span>
+    <span class="sub">
+      Sorted by {{ sort_label }}, {{ sort_phrase }}
+      {%- if not default_sort %}
+      &middot; <a href="{{ default_sort_url }}">back to the ranking</a>
+      {%- endif %}
+    </span>
   </div>
   <div class="card-body flush">
     {% if not rows %}
@@ -154,13 +183,13 @@
     <table class="data">
       <thead>
         <tr>
-          <th class="num">Score</th>
-          <th>Ticket</th>
-          <th>Assigned to</th>
-          <th>Age</th>
-          <th>Idle</th>
-          <th>Blocked by</th>
-          <th>Suggested next step</th>
+          {{ sortable('score',  'Score', numeric=True) }}
+          {{ sortable('ticket', 'Ticket') }}
+          {{ sortable('agent',  'Assigned to') }}
+          {{ sortable('age',    'Age') }}
+          {{ sortable('idle',   'Idle') }}
+          {{ sortable('owner',  'Blocked by') }}
+          {{ sortable('action', 'Suggested next step') }}
         </tr>
       </thead>
       <tbody>
