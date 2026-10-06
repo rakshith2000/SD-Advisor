@@ -1,5 +1,10 @@
 """Builds the two demo decks for the Service Desk introduction.
 
+Requires python-pptx (pip install python-pptx). Not in requirements.txt, for
+the same reason generate_deployment_guide.py keeps python-docx out of it: the
+service does not import either, and a deployment should not pull in a document
+toolchain to run a scheduler.
+
     python docs/generate_demo_decks.py
 
 Produces, next to this file:

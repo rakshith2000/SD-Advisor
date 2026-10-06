@@ -239,27 +239,33 @@ table.data td {
 }
 table.data tbody tr:hover { background: var(--plane); }
 
-/* Sortable headings. The active column is marked by weight, an underline and
-   an arrow together - colour alone would not survive a greyscale print or a
-   reader who cannot distinguish it. */
+/* Sortable headings. A real button, so it is reachable by keyboard and
+   announced as pressable; the heading styling is pushed onto it.
+
+   The active column is marked by weight, an underline and an arrow together.
+   Colour alone would not survive a greyscale print or a reader who cannot
+   distinguish it. */
 table.data th.sortable { padding: 0; }
-table.data th.sortable > a {
-  display: block; padding: 10px 12px; color: var(--text-muted);
-  font: inherit; text-transform: inherit; letter-spacing: inherit;
+table.data th.sortable > button {
+  display: block; width: 100%; padding: 10px 12px;
+  background: none; border: 0; cursor: pointer;
+  font: inherit; color: var(--text-muted);
+  text-align: left; text-transform: inherit; letter-spacing: inherit;
   white-space: nowrap;
 }
-table.data th.sortable > a:hover {
-  color: var(--text-primary); background: var(--plane); text-decoration: none;
+table.data th.sortable > button:hover {
+  color: var(--text-primary); background: var(--plane);
 }
-table.data th.sortable > a:focus-visible {
+table.data th.sortable > button:focus-visible {
   outline: 2px solid var(--accent); outline-offset: -2px;
 }
-table.data th.sortable.num > a { text-align: right; }
-table.data th.sortable.is-sorted > a {
+table.data th.sortable.num > button { text-align: right; }
+table.data th.sortable.is-sorted > button {
   color: var(--text-primary);
   box-shadow: inset 0 -2px 0 var(--accent);
 }
 .sort-indicator { font-size: 9px; margin-left: 4px; color: var(--accent); }
+#board-sort-reset { margin-left: 4px; font-size: 12px; }
 table.data td.num, table.data th.num { text-align: right;
   font-variant-numeric: tabular-nums; white-space: nowrap; }
 .tnum { font-variant-numeric: tabular-nums; }

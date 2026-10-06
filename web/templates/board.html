@@ -10,21 +10,32 @@
 {% endmacro %}
 
 {#
-  A sortable column heading. The link is built server-side so it carries
-  every active filter forward - a sort that quietly dropped the queue filter
-  would show a different board while looking like it had only reordered one.
-  aria-sort is set so the current order is announced rather than conveyed by
-  the arrow alone.
+  A sortable column heading.
+
+  Sorting happens in the browser - see static/table-sort.js - so the type
+  declared here has to match the data-* attribute on each row, and both must
+  carry the underlying value rather than the rendered one. Age renders as
+  "10 Days 12 Hrs"; sorted as text, 2 Days would land after it.
+
+  A real <button> rather than a styled div, so it is reachable by keyboard
+  and announced as something that can be pressed. aria-sort is maintained by
+  the script, so the current order does not depend on seeing the arrow.
 #}
-{% macro sortable(key, label, numeric=False) %}
-{% set link = sort_links[key] %}
-<th class="{{ 'num' if numeric }} sortable {{ 'is-sorted' if link.active }}"
-    {% if link.active %}aria-sort="{{ 'descending' if link.direction == 'desc' else 'ascending' }}"{% endif %}>
-  <a href="{{ link.url }}"
-     title="Sort by {{ link.label }}, {{ link.next_phrase }}">
+{#
+  `numeric` is the sort type and `right` is the alignment. They are separate
+  arguments on purpose: Age and Idle are numbers that render as text in a
+  left-aligned cell, so tying the two together would either right-align those
+  headings away from their values or - the way round that actually matters -
+  declare a duration column as text and sort it alphabetically.
+#}
+{% macro sortable(key, label, numeric=False, right=False) %}
+<th class="{{ 'num' if right }} sortable" data-sort="{{ key }}"
+    data-type="{{ 'num' if numeric else 'text' }}" data-label="{{ label }}"
+    aria-sort="none">
+  <button type="button">
     {{- label -}}
-    <span class="sort-indicator" aria-hidden="true">{{ link.indicator }}</span>
-  </a>
+    <span class="sort-indicator" aria-hidden="true"></span>
+  </button>
 </th>
 {% endmacro %}
 
@@ -94,11 +105,6 @@
 {% endif %}
 
 <form class="filters" method="get" action="/board">
-  {# Carried so that applying a filter does not silently reset the order the
-     reader chose. Reset, below, deliberately clears both. #}
-  <input type="hidden" name="sort" value="{{ sort }}">
-  <input type="hidden" name="dir" value="{{ direction }}">
-
   <div class="field">
     <label for="group">Group</label>
     <select id="group" name="group">
@@ -168,10 +174,14 @@
   <div class="card-head">
     <h2>{{ rows|length }} ticket{{ 's' if rows|length != 1 }}</h2>
     <span class="sub">
-      Sorted by {{ sort_label }}, {{ sort_phrase }}
-      {%- if not default_sort %}
-      &middot; <a href="{{ default_sort_url }}">back to the ranking</a>
-      {%- endif %}
+      {#
+        Updated by the sort script. The default text lives in data-default so
+        the script can put it back, and is also the text rendered server-side
+        for anyone who arrives before the script runs.
+      #}
+      <span id="board-sort-note"
+            data-default="Highest attention score first">Highest attention score first</span>
+      <a href="#" id="board-sort-reset" hidden>&middot; back to the ranking</a>
     </span>
   </div>
   <div class="card-body flush">
@@ -180,21 +190,33 @@
       Nothing aged in this view. Either the backlog is clean or the filters are too narrow.
     </div>
     {% else %}
-    <table class="data">
+    <table class="data" data-sortable="board"
+           data-sort-note="board-sort-note" data-sort-reset="board-sort-reset">
       <thead>
         <tr>
-          {{ sortable('score',  'Score', numeric=True) }}
+          {{ sortable('score',  'Score', numeric=True, right=True) }}
           {{ sortable('ticket', 'Ticket') }}
           {{ sortable('agent',  'Assigned to') }}
-          {{ sortable('age',    'Age') }}
-          {{ sortable('idle',   'Idle') }}
+          {{ sortable('age',    'Age',  numeric=True) }}
+          {{ sortable('idle',   'Idle', numeric=True) }}
           {{ sortable('owner',  'Blocked by') }}
           {{ sortable('action', 'Suggested next step') }}
         </tr>
       </thead>
       <tbody>
         {% for row in rows %}
-        <tr>
+        {#
+          The sort keys. Minutes rather than the rendered duration, and the
+          raw assignee rather than the "Unassigned" placeholder, so ordering
+          is done on the value and not on how it happens to read.
+        #}
+        <tr data-score="{{ row.attention_score or 0 }}"
+            data-ticket="{{ row.incident_number }}"
+            data-agent="{{ row.assigned_to or '' }}"
+            data-age="{{ row.age_minutes or 0 }}"
+            data-idle="{{ row.idle_minutes or 0 }}"
+            data-owner="{{ row.pending_action_owner_label or '' }}"
+            data-action="{{ row.action_label or '' }}">
           <td class="num">
             <div class="sev sev-{{ row.severity }}">
               <span class="sev-dot" aria-hidden="true"></span>
@@ -258,4 +280,8 @@
 </form>
 {% endif %}
 
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/table-sort.js"></script>
 {% endblock %}
