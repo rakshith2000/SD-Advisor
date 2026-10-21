@@ -25,8 +25,8 @@ from core.logging_setup import get_logger
 from core.timeutil import (DEFAULT_DATETIME_FORMAT, DEFAULT_DISPLAY_TZ,
                           format_dt, timezone_choices, utc_now,
                           zone_abbreviation, zone_label)
-from delivery.digest import (ACTION_LABELS, FLAG_LABELS,
-                             PENDING_ACTION_OWNER_LABELS, DigestBuilder)
+from delivery.digest import (ACTION_LABELS, FLAG_LABELS, DigestBuilder,
+                             owner_labels, team_label)
 from delivery.dispatch import Dispatcher
 from pipeline.orchestrator import Orchestrator
 from pipeline.scoring import DEFAULT_WEIGHTS
@@ -248,7 +248,10 @@ def create_app(config_path: Optional[str] = None) -> FastAPI:
     templates.env.globals.update({
         'ACTION_LABELS': ACTION_LABELS,
         'FLAG_LABELS': FLAG_LABELS,
-        'PENDING_ACTION_OWNER_LABELS': PENDING_ACTION_OWNER_LABELS,
+        # Built from settings rather than imported as a constant, so the name
+        # for the owning team follows display.team_label.
+        'PENDING_ACTION_OWNER_LABELS': owner_labels(ctx.settings),
+        'team_label': team_label(ctx.settings),
         'shadow_mode': ctx.settings.shadow_mode,
         'customer': ctx.settings.customer_name,
         'aged_after_days': ctx.settings.aged_after_days,

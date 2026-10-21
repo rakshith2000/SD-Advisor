@@ -33,7 +33,8 @@ class PendingActionOwner(str, Enum):
     """The party responsible for the next action.
 
     SERVICE_DESK denotes the team rather than a named individual, because an
-    unassigned incident is still Service Desk work.
+    unassigned incident is still the assigned team's work. It is a role
+    rather than a queue name, so it holds for every tracked group.
     """
     SERVICE_DESK = 'SERVICE_DESK'
     CALLER = 'CALLER'

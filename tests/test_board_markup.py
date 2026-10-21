@@ -23,7 +23,7 @@ from markupsafe import Markup, escape
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from core.timeutil import format_dt
-from delivery.digest import (ACTION_LABELS, FLAG_LABELS,
+from delivery.digest import (ACTION_LABELS, DEFAULT_TEAM_LABEL, FLAG_LABELS,
                              PENDING_ACTION_OWNER_LABELS)
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -45,6 +45,7 @@ def html():
         'ACTION_LABELS': ACTION_LABELS, 'FLAG_LABELS': FLAG_LABELS,
         'PENDING_ACTION_OWNER_LABELS': PENDING_ACTION_OWNER_LABELS,
         'shadow_mode': False, 'customer': 'Kohler', 'aged_after_days': 5,
+        'team_label': DEFAULT_TEAM_LABEL,
     })
 
     def row(number, score, agent, age, idle):
@@ -56,7 +57,7 @@ def html():
             # The rendered durations, which order differently as text.
             'age_display': f'{age // DAY} Days', 'idle_display': f'{idle // DAY} Days',
             'short_description': 'A thing broke', 'flag_labels': [],
-            'pending_action_owner_label': 'Service Desk',
+            'pending_action_owner_label': DEFAULT_TEAM_LABEL,
             'action_label': 'Resolve', 'recommended_action': 'RESOLVE',
             'confidence': 0.8, 'confidence_pct': 80, 'low_confidence': False,
             'rationale': 'because', 'snoozed': 0, 'suggested_target_group': None,
@@ -76,7 +77,7 @@ def html():
         rows=[row('INC0003', 70, 'asha rao', 10 * DAY, 10 * DAY),
               row('INC0001', 9, 'Zoe Clark', 2 * DAY, 2 * DAY),
               row('INC0002', 45, '', 21 * DAY, 1 * DAY)],
-        summary={'total': 3, 'service_desk_owned': 3, 'sla_breached': 0,
+        summary={'total': 3, 'team_owned': 3, 'sla_breached': 0,
                  'sla_at_risk': 0, 'prolonged_inactivity': 1,
                  'caller_awaiting': 0, 'dependency_cleared': 0,
                  'closure_candidates': 0, 'needs_review': 0},
@@ -182,3 +183,29 @@ class TestNoServerSideSortRemains:
         source = (ROOT / 'web' / 'app.py').read_text(encoding='utf-8')
         for name in ('BOARD_SORTS', 'sort_board', 'sort_links', 'normalise_sort'):
             assert name not in source, f'{name} survived the move to the client'
+
+
+class TestNoSingleQueueWording:
+    def test_the_summary_tiles_name_no_specific_queue(self, html):
+        """A deployment covering Desktop Support must not be told its tickets
+        are awaiting the Service Desk.
+
+        Scoped to the tiles, which are static prose. Queue names appear
+        legitimately further down - in the filter dropdown and against each
+        row - and asserting over those would be asserting that no customer
+        may have a queue called Service Desk.
+        """
+        tiles = html[html.index('<div class="tiles">'):
+                     html.index('<form class="filters"')]
+        assert 'Service Desk' not in tiles
+        assert 'service desk' not in tiles.lower()
+
+    def test_the_owning_team_tile_uses_the_configured_label(self, html):
+        assert f'Awaiting {DEFAULT_TEAM_LABEL.lower()}' in html
+
+    def test_the_tile_reads_the_renamed_summary_key(self, html):
+        """summary.service_desk_owned renders as empty rather than raising, so
+        a missed rename would show a blank tile and no error."""
+        import re
+        tile = re.search(r'Awaiting [^<]*</div>\s*<div class="value">(\d+)</div>', html)
+        assert tile and tile.group(1) == '3'

@@ -1,4 +1,4 @@
-"""Builds the two demo decks for the Service Desk introduction.
+"""Builds the two demo decks for the introduction call.
 
 Requires python-pptx (pip install python-pptx). Not in requirements.txt, for
 the same reason generate_deployment_guide.py keeps python-docx out of it: the
@@ -466,7 +466,7 @@ class Deck:
 
 WEIGHT_DESC = {
     'sla_risk': 'How close the resolution SLA is to breaching',
-    'inactivity_duration': 'Time since the last real Service Desk action',
+    'inactivity_duration': 'Time since the last real action by the assigned team',
     'unactioned_delay': 'Caller replied and nobody answered; dependency already closed',
     'ticket_age': 'How far past the aged threshold the incident is',
     'business_priority': 'Priority and impact of the incident',
@@ -498,12 +498,12 @@ CADENCE = [
 
 
 def overview():
-    d = Deck('Service Desk introduction')
+    d = Deck('Team introduction')
 
     d.title(
         'Aged Ticket Advisor',
         'Finding the tickets that are genuinely stuck - and saying what to do next',
-        'A read-only companion to ServiceNow for the Service Desk.  '
+        'A read-only companion to ServiceNow for any assignment group.  '
         'It never edits an incident.',
         notes='Frame the session: 20 minutes, then the live board. Two things '
               'to land - it is read-only, and it ranks rather than lists. '
@@ -547,7 +547,7 @@ def overview():
                  'client in the codebase - it cannot resolve, reassign or '
                  'comment on an incident even if someone asked it to.',
         notes='Spell out the read-only point here rather than at the end. It '
-              'is the first question a Service Desk team asks, and answering '
+              'is the first question a support team asks, and answering '
               'it early buys attention for everything after.')
 
     d.cards(
@@ -556,7 +556,7 @@ def overview():
              'Age is how old. Idle is how long since a person last did '
              'something real. The second is the one that matters.'),
             ('Who owes the next action',
-             'Service Desk, Caller, Vendor, Change, Problem or Approval - '
+             'Assigned team, Caller, Vendor, Change, Problem or Approval - '
              'derived, not taken from the hold reason at face value.'),
             ('Caller replied, unanswered',
              'The caller spoke last and nobody has responded since.'),
@@ -672,6 +672,8 @@ def overview():
             'Three roles: Admin, Lead, Viewer. New users start as Viewer.',
             'You see only the assignment groups you belong to - read from '
             'ServiceNow on first sign-in.',
+            'Digests and alerts are scoped the same way: a lead covering two '
+            'queues gets one email containing those two, never a third.',
             'Separate database and service from the existing audit tool.',
             'Credentials held in Vault; nothing in a config file.',
             'All times shown in US Central, switchable per person.',
@@ -742,7 +744,7 @@ def detailed():
          ['Three follow-ups, no reply',
           'Open and ageing',
           'A documented closure candidate'],
-         ['Reassigned out of the Service Desk',
+         ['Reassigned to a queue we do not cover',
           'Still on our board',
           'Another team owns it now']],
         widths=[26, 36, 38],
@@ -777,7 +779,7 @@ def detailed():
              'the clock. Kohler\'s integration accounts end .rest, and that '
              'pattern is caught even when a new one is not yet configured.'),
             ('The caller\'s own updates are excluded',
-             'A caller replying does not mean the Service Desk acted. It '
+             'A caller replying does not mean the assigned team acted. It '
              'usually means the opposite.'),
             ('Field churn is excluded',
              'Business duration, SLA due, mod count - all ignored.'),
@@ -792,7 +794,7 @@ def detailed():
     d.table(
         'Who owes the next action',
         ['Value', 'Means', 'Set when'],
-        [['Service Desk', 'Ours to move', 'Default, and any time a blocker clears'],
+        [['Assigned team', 'Ours to move', 'Default, and any time a blocker clears'],
          ['Caller', 'Waiting on the user', 'Hold reason says so AND they have not replied since'],
          ['Vendor', 'Waiting on a third party', 'Hold reason names a vendor or third party'],
          ['Change', 'Waiting on an RFC', 'Hold reason names a change, and it is still open'],
@@ -990,7 +992,7 @@ def detailed():
          ['SLA at risk', 'Consumption crosses the configured percentage'],
          ['Caller awaiting reply', 'The caller spoke last and nobody has answered'],
          ['Dependency cleared', 'The change or problem it was held for has closed'],
-         ['Prolonged inactivity', 'No real Service Desk action past the threshold']],
+         ['Prolonged inactivity', 'No real action by the assigned team past the threshold']],
         widths=[30, 70],
         lead='Detected on the ten-minute loop. Deduplicated to once per '
              'ticket, per alert type, per day - a ticket that stays breached '
@@ -1094,7 +1096,7 @@ def detailed():
         ['Role', 'Who', 'Can'],
         [['Viewer', 'Agents, managers',
           'See the board and tickets for their own queues'],
-         ['Lead', 'Service Desk leads',
+         ['Lead', 'Team leads',
           'All of the above, plus record verdicts, snooze, request re-analysis, '
           'receive the digest'],
          ['Admin', 'Application team',
@@ -1168,7 +1170,7 @@ def detailed():
               'succeed is not a pilot.')
 
     d.bullets(
-        'What we need from the Service Desk',
+        'What we need from the teams',
         [
             ('Two or three leads recording verdicts',
              'Roughly fifteen tickets a day between them is enough for a '

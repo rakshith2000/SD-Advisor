@@ -37,7 +37,7 @@ class IncidentReader:
     def _group_clause(self) -> str:
         """Scope to the configured queues, dot-walking to the group's name.
 
-        assignment_group stores a sys_id, so `assignment_groupIN Service Desk`
+        assignment_group stores a sys_id, so `assignment_groupIN Desk Name`
         compares a 32-character hex string against a display name and matches
         nothing, whatever the name is. Dot-walking with `assignment_group.name`
         joins to sys_user_group and compares the name for real.
@@ -54,7 +54,7 @@ class IncidentReader:
         """Configured group names with no exactly-matching active sys_user_group.
 
         The scope clause matches on the exact name. A near-miss - 'Service
-        Desk' where the group is really 'IT Service Desk' - narrows every
+        Desk' where the group is really 'IT Service Desk' - narrows the
         incident query to nothing and returns HTTP 200 with an empty result,
         so it presents as "no tickets today" rather than as an error. Worth
         one extra call at startup to turn that into a loud failure.

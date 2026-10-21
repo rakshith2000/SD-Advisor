@@ -195,7 +195,7 @@ CREATE TABLE IF NOT EXISTS attention_weightage (
 
 INSERT INTO attention_weightage (component, weightage, description) VALUES
     ('sla_risk',              25, 'Proximity of the resolution SLA to breach'),
-    ('inactivity_duration',   25, 'Elapsed time since the last substantive Service Desk action'),
+    ('inactivity_duration',   25, 'Elapsed time since the last substantive action by the assigned team'),
     ('unactioned_delay',      15, 'Caller response unanswered, or dependency already closed'),
     ('ticket_age',            10, 'Age beyond the aged-after threshold'),
     ('business_priority',     10, 'Business priority and impact of the incident'),

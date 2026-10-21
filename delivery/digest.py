@@ -7,7 +7,7 @@ UI. Three ideas drive the shape of this:
     rows are the whole job on a normal day.
   * Show the delta. A lead who saw the same 40 rows yesterday needs to know
     which 6 are new or newly worse, so movement is computed explicitly.
-  * Group by pending action owner. "9 of these require Service Desk action"
+  * Group by pending action owner. "9 of these require action from us"
     is the sentence that saves a lead the most time.
 """
 
@@ -50,8 +50,18 @@ FLAG_LABELS = {
 }
 
 # Values of pending_action_owner, as presented to leads and agents.
+#
+# SERVICE_DESK is a role, not a queue: it means the team the incident is
+# assigned to owes the next action, as opposed to the caller, a vendor or a
+# linked record. The stored token keeps its original spelling - it is written
+# into ticket_signal and into the model's schema, and renaming it would
+# rewrite history for no gain - but the label is configurable, because a
+# deployment covering Desktop Support and Network should not be told its
+# tickets are awaiting the Service Desk.
+DEFAULT_TEAM_LABEL = 'Assigned team'
+
 PENDING_ACTION_OWNER_LABELS = {
-    'SERVICE_DESK': 'Service Desk',
+    'SERVICE_DESK': DEFAULT_TEAM_LABEL,
     'CALLER': 'Caller',
     'VENDOR': 'Vendor',
     'CHANGE': 'Change',
@@ -59,6 +69,33 @@ PENDING_ACTION_OWNER_LABELS = {
     'APPROVAL': 'Approval',
     'NONE': '-',
 }
+
+
+def team_label(settings) -> str:
+    """What to call the team that owns the next action.
+
+    One name for however many queues are configured. Naming the queue itself
+    would be more precise per ticket and useless in a summary - "9 awaiting
+    Service Desk, 4 awaiting Desktop Support" is two facts where a lead needs
+    one, and the per-ticket queue is already a column.
+    """
+    if settings is None:
+        return DEFAULT_TEAM_LABEL
+    try:
+        configured = settings.get('display.team_label', '')
+    except Exception:
+        return DEFAULT_TEAM_LABEL
+    # `or ''` before str(), not after: a key present with a null value returns
+    # None, and str(None) is the four-character string 'None', which is
+    # perfectly truthy and would be printed on every page.
+    return str(configured or '').strip() or DEFAULT_TEAM_LABEL
+
+
+def owner_labels(settings) -> Dict[str, str]:
+    """PENDING_ACTION_OWNER_LABELS with the team label applied."""
+    labels = dict(PENDING_ACTION_OWNER_LABELS)
+    labels['SERVICE_DESK'] = team_label(settings)
+    return labels
 
 
 def _as_list(value: Any) -> List[str]:
@@ -79,6 +116,7 @@ class DigestBuilder:
         self.db = context.db
         self.settings = context.settings
         self.base_url = str(context.settings.get('web.base_url', '')).rstrip('/')
+        self.owner_labels = owner_labels(context.settings)
 
     # -- data --------------------------------------------------------------
 
@@ -123,7 +161,7 @@ class DigestBuilder:
 
         action = row.get('recommended_action') or ''
         item['action_label'] = ACTION_LABELS.get(action, action.replace('_', ' ').title() or 'Not analysed')
-        item['pending_action_owner_label'] = PENDING_ACTION_OWNER_LABELS.get(
+        item['pending_action_owner_label'] = self.owner_labels.get(
             row.get('pending_action_owner') or '', row.get('pending_action_owner') or '-')
 
         item['severity'] = self._severity(row.get('attention_score') or 0)
@@ -208,7 +246,9 @@ class DigestBuilder:
 
         return {
             'total': len(rows),
-            'service_desk_owned': sum(
+            # The count of incidents this team owes the next action on,
+            # whichever queues are in play.
+            'team_owned': sum(
                 1 for r in rows if r.get('pending_action_owner') == SERVICE_DESK),
             'sla_breached': sum(1 for r in rows if r.get('sla_breached')),
             'sla_at_risk': sum(1 for r in rows if 'SLA_AT_RISK' in (r.get('risk_flags') or [])),

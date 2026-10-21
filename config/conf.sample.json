@@ -54,7 +54,8 @@
         "timeout_seconds": 60,
         "page_size": 200,
         "max_retries": 3,
-        "assignment_groups": ["Service Desk"],
+        "_comment_groups": "Every queue this deployment covers - add as many as needed. Names must match sys_user_group.name exactly; `python run.py doctor` reports a near miss, which otherwise narrows every query to nothing and presents as a quiet empty board rather than an error.",
+        "assignment_groups": ["Service Desk", "Desktop Support", "Network Operations"],
         "system_accounts": ["system", "guest", "cac.rest", "integration.user"]
     },
 
@@ -114,10 +115,11 @@
         "stats_refresh_cron": "0 2 * * *",
         "digests": [
             {
-                "name": "emea-morning",
+                "_comment": "One entry per schedule, not per queue. An empty assignment_groups covers every configured queue; each lead still receives only the queues they are entitled to, so one entry does not mean one shared email.",
+                "name": "morning",
                 "cron": "30 7 * * 1-5",
                 "timezone": "Europe/London",
-                "assignment_groups": ["Service Desk"]
+                "assignment_groups": []
             }
         ]
     },
@@ -127,6 +129,8 @@
         "_verify": "CONFIRM the From domain before go-live - a wrong sender is silently quarantined.",
 
         "enabled": true,
+        "_comment_from_name": "Display name on every outbound message. Keep it queue-neutral - a deployment covering several groups should not appear to come from one of them.",
+        "from_name": "Aged Ticket Advisor",
         "host": "mailhost.kohler.com",
         "port": 25,
         "use_starttls": false,
@@ -206,6 +210,9 @@
     "display": {
         "_comment": "Presentation only. Everything stored in the database and compared in code is naive UTC - that does not change, and must not: an elapsed time computed between two clocks is wrong in a way nothing reports. This block decides what a human sees, converted once at the edge.",
         "_comment_tz": "An IANA name, never a fixed offset. America/Chicago is CST for part of the year and CDT for the rest; -06:00 would be an hour out for eight months and the abbreviation beside each timestamp would be wrong. Matches the ServiceNow instance, so a time here reads the same as the same time in ServiceNow.",
+
+        "_comment_team": "What to call the team that owes the next action, wherever the UI and the digests would otherwise have named one queue. One name for however many queues are configured - the per-ticket queue is already a column, so this is the aggregate label only. Examples: \"Assigned team\", \"IT Support\", \"Service Desk\".",
+        "team_label": "Assigned team",
 
         "timezone": "America/Chicago",
 

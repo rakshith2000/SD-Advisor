@@ -149,9 +149,9 @@
   <tr><td style="padding:16px 14px 4px 20px;">
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>
       {{ stat_tile('Aged tickets', summary.total, 'in scope today', INK) }}
-      {{ stat_tile('Awaiting Service Desk', summary.service_desk_owned, 'remainder are awaiting other parties', (CRITICAL if summary.service_desk_owned else GOOD)) }}
+      {{ stat_tile('Awaiting ' ~ team_label|lower, summary.team_owned, 'remainder are awaiting other parties', (CRITICAL if summary.team_owned else GOOD)) }}
       {{ stat_tile('SLA breached', summary.sla_breached, summary.sla_at_risk ~ ' more at risk', (CRITICAL if summary.sla_breached else GOOD)) }}
-      {{ stat_tile('Prolonged inactivity', summary.prolonged_inactivity, 'no Service Desk action for 4+ days', (SERIOUS if summary.prolonged_inactivity else GOOD)) }}
+      {{ stat_tile('Prolonged inactivity', summary.prolonged_inactivity, 'no action by your team for 4+ days', (SERIOUS if summary.prolonged_inactivity else GOOD)) }}
     </tr></table>
   </td></tr>
 

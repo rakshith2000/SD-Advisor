@@ -26,9 +26,14 @@ class Mailer:
         self.settings = settings
         self.db = db
         self.enabled = bool(settings.get('mail.enabled', True))
+        # The display name on every outbound message. Configurable because the
+        # service is not tied to one queue: a deployment covering several
+        # groups should not have its mail appear to come from one of them.
+        self.from_name = (str(settings.get('mail.from_name', '')).strip()
+                          or 'Aged Ticket Advisor')
         self.shadow = bool(settings.get('runtime.shadow_mode', True))
 
-        # Shadow mode exists to stop bulk mail reaching the wider service desk
+        # Shadow mode exists to stop bulk mail reaching the wider team
         # while output is still being validated. An access request notification
         # is a different thing: one message to the administrators, about the
         # service itself, triggered by a person who is waiting for an answer.
@@ -84,7 +89,7 @@ class Mailer:
 
         message = EmailMessage()
         message['Subject'] = full_subject
-        message['From'] = formataddr(('Service Desk Advisor', self.from_address))
+        message['From'] = formataddr((self.from_name, self.from_address))
         message['To'] = ', '.join(recipients)
         message['Message-ID'] = make_msgid(domain='sd-advisor')
         if self.reply_to:

@@ -1,6 +1,6 @@
 # Aged Ticket Advisor
 
-Automates the daily aged pending ticket review that service desk leads currently
+Automates the daily aged pending ticket review that support team leads currently
 do by hand. It pulls open incidents older than N days, works out **who is
 actually blocking each one**, ranks them by an explainable attention score,
 grounds a recommendation in comparable resolved incidents and KB articles, and
@@ -61,7 +61,7 @@ comments on a ticket.
 | Signal | Why it matters |
 |---|---|
 | `idle_days` | Time since the last **meaningful agent action**. Excludes system accounts, `*.rest` integration users, SLA recalculations and the caller's own updates — otherwise the number is noise. |
-| **`pending_action_owner`** | SERVICE_DESK / CALLER / VENDOR / CHANGE / PROBLEM / APPROVAL. Reduces "40 aged incidents" to "9 requiring Service Desk action". |
+| **`pending_action_owner`** | SERVICE_DESK / CALLER / VENDOR / CHANGE / PROBLEM / APPROVAL. A role, not a queue: SERVICE_DESK means the team the incident is assigned to owes the next action. Reduces "40 aged incidents" to "9 requiring our action". |
 | **`caller_replied_unanswered`** | Caller responded, agent hasn't. Silent MTTR killer, and it overrides an "awaiting caller" hold reason. |
 | **`dependency_resolved`** | On hold for a CHG/PRB that has **already closed**. Invisible in a manual review; often the oldest tickets on the board. |
 | `followup_count` / `auto_close_candidate` | Documented follow-ups with no response, leading to a pre-drafted closure. |

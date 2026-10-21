@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Generates the Aged Ticket Advisor user manual as a Word document.
 
-Audience is Service Desk agents and team leads, not engineers. Kept in the
+Audience is support agents and team leads, not engineers. Kept in the
 repo alongside the deployment guide so both regenerate from the same builder
 and stay consistent with the application as it changes.
 
@@ -25,7 +25,7 @@ OUT = Path(__file__).resolve().parent / 'Aged_Ticket_Advisor_User_Manual.docx'
 TODAY = datetime.date.today().strftime('%d %B %Y')
 
 g = Guide(footer_label='Aged Ticket Advisor - User Manual',
-          header_label='Service Desk - Agents and Team Leads')
+          header_label='IT Support - Agents and Team Leads')
 d = g.doc
 
 
@@ -42,7 +42,7 @@ run.font.size = Pt(18)
 run.font.color.rgb = ACCENT
 
 sub2 = d.add_paragraph()
-run = sub2.add_run('For Service Desk Agents and Team Leads')
+run = sub2.add_run('For Support Agents and Team Leads')
 run.font.size = Pt(12.5)
 run.font.color.rgb = INK2
 
@@ -55,7 +55,7 @@ g.table(['', ''], [
     ['What it does', 'Reviews every open ticket older than 5 days, works out who is really '
                      'blocking it, ranks them, and suggests what to do next'],
     ['How you use it', 'A daily email, and a web board you can open any time'],
-    ['Who it is for', 'Service Desk agents and team leads'],
+    ['Who it is for', 'Support agents and team leads, across every queue the tool covers'],
     ['Does it change my tickets?', 'No. It cannot. It only reads.'],
     ['Do I have to use it?', 'Leads: the morning review moves here. Agents: the digest is '
                              'a help, not an instruction'],
@@ -165,7 +165,7 @@ g.h2('1.4 Where to find it')
 g.table(['Thing', 'Where'], [
     ['The board (all of it)', 'https://<your-server>:8444 — sign in with the account your '
                               'administrator created'],
-    ['Your daily email', 'Arrives on weekday mornings from the Service Desk Advisor address'],
+    ['Your daily email', 'Arrives on weekday mornings from the Aged Ticket Advisor address'],
     ['A specific ticket', 'Click the ticket number in any email, or go to /board and find it'],
     ['Your own queue', 'On the board, choose your name in the Agent filter'],
 ], widths=[4.0, 12.4])
@@ -186,11 +186,11 @@ g.p('There are four ideas. Once they make sense, everything on the screen makes 
 
 g.h2('2.1 Age and idle time are different things')
 g.p('Age is how long the incident has existed. Idle time is how long it has been since '
-    'anyone in the Service Desk acted on it.')
+    'anyone on your team acted on it.')
 g.callout('info', 'Idle time is the figure that matters.',
           'An incident can be three weeks old and entirely healthy — a hardware order with '
           'a confirmed delivery date, for example. An incident eight days old with no '
-          'Service Desk action for six of them is a different situation entirely.')
+          'action by your team for six of them is a different situation entirely.')
 
 g.h3('How these are displayed')
 g.p('Both are shown as an exact elapsed duration rather than a rounded number of days, so a '
@@ -214,18 +214,18 @@ g.table(['Counts as activity', 'Does NOT count'], [
     ['Changing the state, priority or hold reason', 'An SLA timer recalculating'],
     ['Assigning or reassigning the ticket', 'An integration account touching the record'],
     ['Attaching a knowledge article', 'The caller adding a comment (that is caller activity, '
-                                      'not Service Desk activity — and it usually means a '
+                                      'not activity by your team — and it usually means a '
                                       'response is now owed)'],
 ], widths=[8.2, 8.2])
 
 g.h2('2.2 Pending action owner — the key field')
 g.p('Every aged incident is assigned a Pending Action Owner. This answers the question '
-    'that matters most to a lead: is this incident awaiting Service Desk action, or is it '
+    'that matters most to a lead: is this incident awaiting our action, or is it '
     'legitimately awaiting another party?')
 
-g.table(['Pending action owner', 'What it means', 'Service Desk action required?'], [
-    ['Service Desk', 'No external party is blocking the incident. The next action is owed '
-                     'by the Service Desk', 'Yes — act'],
+g.table(['Pending action owner', 'What it means', 'Action required from us?'], [
+    ['Assigned team', 'No external party is blocking the incident. The next action is owed '
+                      'by whichever team the incident is assigned to', 'Yes — act'],
     ['Caller', 'Awaiting information or confirmation from the caller', 'No — but see below'],
     ['Vendor', 'A third party is responsible for the delay',
      'No — but escalate if the target has been exceeded'],
@@ -297,7 +297,7 @@ g.table(['Flag', 'What it means', 'Typical response'], [
      'Act now while it is still avoidable'],
     ['No action 4+ days', 'Nobody on our side has touched it for four days or more',
      'Either progress it or record why it is waiting'],
-    ['No recent activity', 'No Service Desk action for two days or more',
+    ['No recent activity', 'No action by the assigned team for two days or more',
      'Review and progress'],
     ['Caller awaiting response', 'The caller has responded and received no reply since',
      'Respond. This is the most avoidable category of delay'],
@@ -535,8 +535,8 @@ g.table(['Block', 'What it is for'], [
 g.h2('5.3 The board')
 g.p('Everything in the digest, live and filterable. The filters that get the most use:')
 g.table(['Filter', 'Use it to answer'], [
-    ['Pending action owner = Service Desk',
-     '"What requires Service Desk action this morning?"'],
+    ['Pending action owner = Assigned team',
+     '"What requires action from us this morning?"'],
     ['Risk flag = Caller awaiting response', '"Which callers are awaiting a reply?"'],
     ['Risk flag = Dependency already closed', '"What is held with no remaining reason?"'],
     ['Suggested step = Close - no caller response', '"What can be cleared?"'],
@@ -643,14 +643,14 @@ def scenario(n, title, board, tool_says, whats_going_on, do_this):
 scenario(1, 'The dependency closed and was not noticed',
          """INC2831044   score 74  Critical
 Printer driver deployment failing on the Chicago floor
-Asha Rao · 19 days old · idle 11.4 days · Pending action owner: Service Desk
+Asha Rao · 19 days old · idle 11.4 days · Pending action owner: Assigned team
 Flags: Dependency already closed · Prolonged inactivity · Expected duration exceeded""",
          '"Resolve" — confidence 86%. The change this incident was held for, CHG0044321, '
          'closed successfully eleven days ago.',
          'The ticket is still On Hold — Awaiting Change. Nobody is at fault: ServiceNow does '
          'not report when a dependency closes, so the incident simply remained on hold. The '
          'tool detected the change state and returned the pending action owner to the '
-         'Service Desk.',
+         'the assigned team.',
          'Take it off hold, confirm the driver deployment worked, resolve it. This category of '
          'ticket is often the oldest thing on the board and the quickest to clear.')
 
@@ -665,7 +665,7 @@ Flags: SLA breached · Caller awaiting reply · No action 4+ days""",
          'need to do" view. But the caller answered. The hold reason is just stale, and the '
          'SLA clock kept running.',
          'Reply to the caller today. This is the single most avoidable category of delay in '
-         'any service desk, and the easiest for the tool to catch.')
+         'any support queue, and the easiest for the tool to catch.')
 
 scenario(3, 'Ready to close, nobody pulled the trigger',
          """INC2836210   score 38  Medium
@@ -789,7 +789,7 @@ faqs_hard = [
      'open the actual tickets before drawing conclusions, because high numbers usually mean a '
      'hard queue or time off rather than poor work. If it is being used as a league table, '
      'that is a management issue worth raising.'),
-    ('Is it going to replace service desk jobs?',
+    ('Is it going to replace support jobs?',
      'It does not resolve tickets, talk to callers or make decisions. It removes the reading '
      'that leads currently do before they can decide anything.'),
     ('Is my writing being judged by an AI?',

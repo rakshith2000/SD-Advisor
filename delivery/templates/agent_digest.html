@@ -45,7 +45,7 @@
     </div>
     <div style="font:400 12px/1.6 {{ FONT }};color:{{ INK2 }};padding-top:10px;">
       <strong style="color:{{ INK }};">{{ summary.total }}</strong> aged
-      &middot; <strong style="color:{{ CRITICAL if summary.service_desk_owned else GOOD }};">{{ summary.service_desk_owned }}</strong> awaiting your action
+      &middot; <strong style="color:{{ CRITICAL if summary.team_owned else GOOD }};">{{ summary.team_owned }}</strong> awaiting your action
       {%- if summary.sla_breached %} &middot; <strong style="color:{{ CRITICAL }};">{{ summary.sla_breached }}</strong> SLA breached{% endif %}
       {%- if summary.caller_awaiting %} &middot; <strong style="color:{{ SERIOUS }};">{{ summary.caller_awaiting }}</strong> caller awaiting your reply{% endif %}
     </div>

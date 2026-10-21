@@ -74,14 +74,14 @@
 
 <div class="tiles">
   {{ tile('Aged tickets', summary.total, 'in your scope', none) }}
-  {{ tile('Awaiting Service Desk', summary.service_desk_owned,
+  {{ tile('Awaiting ' ~ team_label|lower, summary.team_owned,
           'remainder are awaiting other parties',
-          'critical' if summary.service_desk_owned else 'good') }}
+          'critical' if summary.team_owned else 'good') }}
   {{ tile('SLA breached', summary.sla_breached, summary.sla_at_risk ~ ' more at risk',
           'critical' if summary.sla_breached else 'good') }}
-  {{ tile('Prolonged inactivity', summary.prolonged_inactivity, 'no Service Desk action for 4+ days',
+  {{ tile('Prolonged inactivity', summary.prolonged_inactivity, 'no action by your team for 4+ days',
           'serious' if summary.prolonged_inactivity else 'good') }}
-  {{ tile('Caller awaiting response', summary.caller_awaiting, 'Service Desk response outstanding',
+  {{ tile('Caller awaiting response', summary.caller_awaiting, 'a response from your team is outstanding',
           'serious' if summary.caller_awaiting else 'good') }}
   {{ tile('Dependency cleared', summary.dependency_cleared, 'change or problem already closed',
           'warning' if summary.dependency_cleared else 'good') }}

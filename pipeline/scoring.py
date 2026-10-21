@@ -189,7 +189,7 @@ def top_reasons(breakdown: Dict[str, Any], limit: int = 3) -> List[str]:
     """
     labels = {
         'sla_risk': 'SLA breach risk',
-        'inactivity_duration': 'no recent Service Desk action',
+        'inactivity_duration': 'no recent action by the assigned team',
         'ticket_age': 'ticket age',
         'business_priority': 'business priority',
         'reassignment_activity': 'reassignment activity',

@@ -160,5 +160,5 @@ same text. A message that distinguishes "no such user" from "wrong password"
 turns the login form into a way of enumerating who works here.
 
 **The realm name is not displayed.** The stock header prints the realm display
-name — "AIOT" — which means nothing to a service desk lead and leaks that the
+name — "AIOT" — which means nothing to a support lead and leaks that the
 realm is shared. `loginTitleHtml` replaces it with the product name.

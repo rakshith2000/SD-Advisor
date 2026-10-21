@@ -5,7 +5,7 @@ servicenow.assignment_groups must hold names that match sys_user_group.name
 EXACTLY - the scope clause dot-walks with assignment_group.nameIN, and a
 near-miss returns zero rows silently rather than erroring.
 
-    python ops/find_groups.py "Service Desk"
+    python ops/find_groups.py "Desk"
 
 Read-only.
 """
@@ -26,7 +26,7 @@ from core.timeutil import utc_now
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('term', nargs='?', default='Service Desk',
+    parser.add_argument('term', nargs='?', default='',
                         help='substring to search group names for')
     parser.add_argument('--config')
     args = parser.parse_args()

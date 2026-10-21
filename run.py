@@ -11,7 +11,7 @@
     python run.py preview -o out.html
     python run.py adduser --username x --role LEAD
     python run.py passwd  --username x
-    python run.py grant   --username x --role LEAD --groups "Service Desk"
+    python run.py grant   --username x --role LEAD --groups "Desk A,Desk B"
     python run.py sync-users [--dry-run]   # reconcile accounts against Keycloak
     python run.py sla-map          # verify how each SLA definition classifies
     python run.py doctor           # check every dependency and exit

@@ -31,7 +31,7 @@ OUT = Path(__file__).resolve().parent / 'Aged_Ticket_Advisor_Deployment_Guide.do
 
 TODAY = datetime.date.today().strftime('%d %B %Y')
 g = Guide(footer_label='Aged Ticket Advisor - Deployment Guide',
-          header_label='Internal - Service Desk Engineering')
+          header_label='Internal - IT Service Management Engineering')
 d = g.doc
 
 # ---------------------------------------------------------------- cover ----
@@ -48,7 +48,7 @@ run.font.size = Pt(17)
 run.font.color.rgb = ACCENT
 
 sub2 = d.add_paragraph()
-run = sub2.add_run('Automated aged pending ticket review for the Service Desk\n'
+run = sub2.add_run('Automated aged pending ticket review for IT support teams\n'
                    'Email digest + web review board  ·  read-only against ServiceNow')
 run.font.size = Pt(11)
 run.font.color.rgb = INK2
@@ -245,14 +245,15 @@ g.table(['System', 'Access level', 'Used for'], [
      'Reach the web board'],
 ], widths=[3.2, 6.6, 6.6])
 
-g.h2('2.3 Decisions to confirm with the Service Desk leads before you start')
+g.h2('2.3 Decisions to confirm with the team leads before you start')
 g.callout('warn', 'Do not skip this.',
           'These four answers change configuration values. Getting the system-account list '
           'wrong in particular makes the idle clock report nonsense, because an automated '
           'update will look like an agent working the ticket.')
 g.table(['#', 'Question', 'Config key it sets', 'Suggested default'], [
     ['1', 'After how many days is a ticket "aged"?', 'thresholds.aged_after_days', '5'],
-    ['2', 'Which assignment groups are in scope?', 'servicenow.assignment_groups', '["Service Desk"]'],
+    ['2', 'Which assignment groups are in scope?', 'servicenow.assignment_groups',
+     '["Service Desk", "Desktop Support", ...] - as many as needed'],
     ['3', 'Which ServiceNow accounts are automated, not people?', 'servicenow.system_accounts',
      'See Section 3.4 — your data shows cac.rest and similar'],
     ['4', 'What time should each region\'s digest land, and who receives it?',
@@ -336,7 +337,7 @@ g.p('This single setting decides what the whole service can see, and getting it 
     'more time than anything else in this guide. The names must match sys_user_group.name '
     'character for character — "Service Desk" will not find "IT Service Desk", and the '
     'failure is silent.')
-g.code("""python ops/find_groups.py "Service Desk" """,
+g.code("""python ops/find_groups.py "Desk" """,
        caption='Lists matching groups with their open and 30-day-resolved volumes')
 g.p('Paste the names it prints into servicenow.assignment_groups exactly as shown, then '
     'verify with:')
@@ -370,7 +371,7 @@ g.code("""mysql -u <admin> -p itsm_analytics_db -e "
    ORDER BY tickets DESC
    LIMIT 30;"
 """, caption='Most frequent ticket-creating accounts over the last 60 days')
-g.p('Review the list with the Service Desk leads and classify each one. In the sample data '
+g.p('Review the list with the team leads and classify each one. In the sample data '
     'reviewed for this build, the following appeared as high-volume creators and are almost '
     'certainly integrations rather than people:')
 g.table(['Account', 'Appears to be', 'Action'], [
@@ -1363,7 +1364,7 @@ g.code("""{
         "timeout_seconds": 60,
         "page_size": 200,
         "max_retries": 3,
-        "assignment_groups": ["Service Desk"],
+        "assignment_groups": ["Service Desk", "Desktop Support"],
         "system_accounts": ["system", "guest", "cac.rest"]
     },
 
@@ -1419,7 +1420,7 @@ g.code("""{
                 "name": "emea-morning",
                 "cron": "30 7 * * 1-5",
                 "timezone": "Europe/London",
-                "assignment_groups": ["Service Desk"]
+                "assignment_groups": []
             }
         ]
     },
@@ -1508,11 +1509,11 @@ g.p('Your caller base spans the UK, the United States and China, so one 07:30 di
     'serve everyone. Add an entry per timezone:')
 g.code(""""digests": [
     { "name": "emea",  "cron": "30 7 * * 1-5", "timezone": "Europe/London",
-      "assignment_groups": ["Service Desk"] },
+      "assignment_groups": [] },
     { "name": "amer",  "cron": "30 7 * * 1-5", "timezone": "America/Chicago",
-      "assignment_groups": ["Service Desk"] },
+      "assignment_groups": [] },
     { "name": "apac",  "cron": "30 8 * * 1-5", "timezone": "Asia/Shanghai",
-      "assignment_groups": ["Service Desk"] }
+      "assignment_groups": [] }
 ]""")
 g.callout('warn', 'Each digest entry runs the full pipeline.',
           'A digest job performs a full sync, a signal refresh and a recommendation pass before '
@@ -1627,10 +1628,10 @@ python run.py adduser \\
 # A shift lead scoped to one group
 python run.py adduser \\
     --username sdlead1 \\
-    --full-name "Service Desk Lead" \\
+    --full-name "Team Lead" \\
     --email sd.lead1@kohlerco.com \\
     --role LEAD \\
-    --groups "Service Desk"
+    --groups "Service Desk,Desktop Support"
 
 # A read-only manager account
 python run.py adduser \\
@@ -1834,7 +1835,7 @@ g.rich([('The unit is at ', {}), ('ops/aged-ticket-advisor.service', {'code': Tr
         ('. Confirm the paths and the user account match your environment before installing '
          'it — particularly if you chose the dedicated virtual environment in Section 5.2.', {})])
 g.code("""[Unit]
-Description=Aged Ticket Advisor (service desk aged pending ticket review)
+Description=Aged Ticket Advisor (aged pending ticket review)
 After=network-online.target vault.service mysqld.service
 Wants=network-online.target
 
@@ -2256,7 +2257,7 @@ mysql -u sd_advisor -p sd_advisor_db -e "
 python run.py doctor | grep "snow groups"
 
 # 5. What are the real names, and how much traffic does each carry?
-python ops/find_groups.py "Service Desk"
+python ops/find_groups.py "Desk"
 
 # 6. Still nothing? Take the incident query apart clause by clause.
 python ops/probe_resolved.py --days 30""")
@@ -2501,7 +2502,7 @@ g.p('Decisions are guarded in SQL with AND status = \'PENDING\', so two administ
 
 g.h3('Granting ADMIN, and the first administrator')
 g.code("""python3 run.py grant --username jane.doe --role ADMIN
-python3 run.py grant --username asha.rao --role LEAD --groups "Service Desk\"""")
+python3 run.py grant --username asha.rao --role LEAD --groups "Service Desk,Desktop Support\"""")
 g.p('ADMIN is deliberately absent from auth.role_requests.allowed_targets: it can change '
     'the scoring weights and trigger live mail to the whole lead group, so it is granted '
     'directly by someone who already holds it. Group names are validated against the real '

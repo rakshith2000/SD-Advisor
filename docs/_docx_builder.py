@@ -63,7 +63,7 @@ def keep_with_next(paragraph):
 
 class Guide:
     def __init__(self, footer_label='Aged Ticket Advisor',
-                 header_label='Internal - Service Desk Engineering'):
+                 header_label='Internal - IT Service Management Engineering'):
         self.footer_label = footer_label
         self.header_label = header_label
         self.doc = Document()

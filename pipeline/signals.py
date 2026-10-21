@@ -30,8 +30,8 @@ from core.timeutil import minutes_between, parse_ts, utc_now
 #                         individual who touched the incident.
 #   Pending action owner - which party owes the next action. SERVICE_DESK is
 #                         the team, because an unassigned incident is still
-#                         the Service Desk's responsibility and has no agent
-#                         to attribute it to.
+#                         the assigned team's responsibility and has no
+#                         agent to attribute it to.
 #
 # Keeping them distinct avoids claiming an individual owes an action when no
 # individual has been assigned.
@@ -245,19 +245,21 @@ def determine_pending_action_owner(ticket: Dict[str, Any],
     """Identify the party responsible for the next action on this ticket.
 
     This is the single most useful field for a lead, because it separates the
-    aged backlog into incidents the Service Desk must act on and incidents
+    aged backlog into incidents the assigned team must act on and incidents
     that are legitimately waiting on someone else.
 
     Returns one of PENDING_ACTION_OWNERS. SERVICE_DESK is the team rather than
-    an individual, because an unassigned incident is still Service Desk work.
+    an individual, because an unassigned incident is still the team's work.
+    The token is a role and not a queue name: it means whichever group the
+    incident sits in owes the next action, however many groups are tracked.
     """
     # A dependency that has already closed returns responsibility to the
-    # Service Desk, irrespective of what the hold reason still states.
+    # assigned team, irrespective of what the hold reason still states.
     if dependency_resolved:
         return SERVICE_DESK
 
     # A caller who has replied without receiving a response is always
-    # Service Desk work.
+    # the team's work.
     if caller_replied_unanswered:
         return SERVICE_DESK
 
