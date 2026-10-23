@@ -533,7 +533,15 @@ g.table(['Block', 'What it is for'], [
 ], widths=[3.6, 12.8])
 
 g.h2('5.3 The board')
-g.p('Everything in the digest, live and filterable. The filters that get the most use:')
+g.p('Everything in the digest, live and filterable.')
+g.p('The assignment group selector sits in the navigation bar at the top of every page, '
+    'because it applies to all of them — the board, By agent and the digest preview. It lists '
+    'only the groups your account is entitled to, so it also answers "what can I see". Leave '
+    'it on "All my groups" for the morning review and narrow it when you want one queue. The '
+    'choice travels in the page address, so a board you send a colleague is the board you '
+    'were looking at.')
+g.p('The remaining filters apply within whichever group is selected. The ones that get the '
+    'most use:')
 g.table(['Filter', 'Use it to answer'], [
     ['Pending action owner = Assigned team',
      '"What requires action from us this morning?"'],
@@ -752,8 +760,13 @@ g.table(['Question', 'Answer'], faqs_general, widths=[5.0, 11.4])
 g.h2('7.2 About how it works')
 faqs_how = [
     ('How often does it update?',
-     'Ticket data and the scores refresh every ten minutes. The suggestions refresh hourly, '
-     'and always before a digest goes out.'),
+     'Ticket data and the scores refresh every ten minutes. Once an hour there is a fuller '
+     'pass that also clears out tickets which have been resolved or moved to another team, '
+     'and refreshes the suggestions. Everything is refreshed again before a digest goes out.'),
+    ('A ticket was resolved this morning — why is it still on the board?',
+     'It will drop off at the next hourly pass. The ten-minute refresh only sees tickets that '
+     'are still open and still yours, so by definition it cannot report one that has just '
+     'stopped being either.'),
     ('Why did the score change overnight when nothing happened?',
      'Idle time and age keep growing, so a ticket nobody touches slowly climbs. That is '
      'intentional.'),
@@ -853,8 +866,15 @@ g.table(['Role', 'Can see', 'Can do'], [
     ['Lead', 'The same', 'Record verdicts, snooze, request re-analysis'],
     ['Admin', 'The same', 'All lead actions, plus tune the score and send digests manually'],
 ], widths=[2.4, 7.0, 7.0])
-g.p('Leads may be restricted to specific assignment groups, in which case they see only those '
-    'groups on the board and in their digest.')
+g.p('Every account is scoped to one or more assignment groups, and sees only those groups on '
+    'the board, in the agent rollup and in its email. Administrators are the exception: they '
+    'see the whole estate, because deciding access requests across it is their job.')
+g.p('Email follows the same boundary. One message is sent per assignment group — the lead '
+    'digest to that group\'s leads, risk alerts to its leads and viewers, with the group named '
+    'in the subject and every administrator copied. If you lead three groups you will receive '
+    'three digests rather than one combined one, so each can be forwarded or filed on its own.')
+g.p('If your board is empty and the page says no assignment groups are in scope, your account '
+    'has not been given any yet. Request access from your profile page.')
 
 
 # =========================================================== SECTION 9 =====

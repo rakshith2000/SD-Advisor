@@ -67,11 +67,25 @@ class Mailer:
     def send(self, to: List[str], subject: str, html_body: str,
              text_body: str = '', run_type: str = 'digest',
              audience: str = 'lead', ticket_count: int = 0,
-             new_count: int = 0) -> bool:
+             new_count: int = 0, cc: Optional[List[str]] = None) -> bool:
         recipients = [r for r in (to or []) if r and '@' in r]
         if not recipients:
             log.warning('Skipping send - no valid recipients for %r', subject)
             return False
+
+        # Anyone already on To is dropped from Cc. Addressing the same person
+        # twice is how a mail client decides the message is a duplicate, and
+        # some relays expand it into two deliveries.
+        addressed = {r.strip().lower() for r in recipients}
+        copies = []
+        for address in (cc or []):
+            if not address or '@' not in address:
+                continue
+            key = address.strip().lower()
+            if key in addressed:
+                continue
+            addressed.add(key)
+            copies.append(address)
 
         full_subject = f'{self.subject_prefix} {subject}'.strip()
 
@@ -81,16 +95,19 @@ class Mailer:
         # the relay at all - so no run_type escapes it.
         if suppressed_by_shadow or not self.enabled:
             reason = 'shadow mode' if suppressed_by_shadow else 'mail disabled'
-            log.info('[%s] would send %r to %s (%d tickets)',
-                     reason, full_subject, ', '.join(recipients), ticket_count)
+            log.info('[%s] would send %r to %s%s (%d tickets)',
+                     reason, full_subject, ', '.join(recipients),
+                     f" cc {', '.join(copies)}" if copies else '', ticket_count)
             self._record(run_type, audience, recipients, ticket_count, new_count,
-                         'SUPPRESSED', reason)
+                         'SUPPRESSED', reason, copies)
             return False
 
         message = EmailMessage()
         message['Subject'] = full_subject
         message['From'] = formataddr((self.from_name, self.from_address))
         message['To'] = ', '.join(recipients)
+        if copies:
+            message['Cc'] = ', '.join(copies)
         message['Message-ID'] = make_msgid(domain='sd-advisor')
         if self.reply_to:
             message['Reply-To'] = self.reply_to
@@ -98,19 +115,25 @@ class Mailer:
         message.set_content(text_body or _html_to_text(html_body))
         message.add_alternative(html_body, subtype='html')
 
-        envelope = recipients + self.always_bcc
+        # The Cc header tells the reader who else got it; the envelope is what
+        # actually delivers. Both are needed - send_message would otherwise
+        # derive the envelope from the headers, and always_bcc has to stay out
+        # of the headers by definition.
+        envelope = recipients + copies + self.always_bcc
 
         try:
             self._transmit(message, envelope)
         except Exception as exc:
             log.exception('Failed to send %r', full_subject)
             self._record(run_type, audience, recipients, ticket_count, new_count,
-                         'FAILED', str(exc)[:500])
+                         'FAILED', str(exc)[:500], copies)
             return False
 
-        log.info('Sent %r to %s (%d tickets)', full_subject,
-                 ', '.join(recipients), ticket_count)
-        self._record(run_type, audience, recipients, ticket_count, new_count, 'SENT', '')
+        log.info('Sent %r to %s%s (%d tickets)', full_subject,
+                 ', '.join(recipients),
+                 f" cc {', '.join(copies)}" if copies else '', ticket_count)
+        self._record(run_type, audience, recipients, ticket_count, new_count,
+                     'SENT', '', copies)
         return True
 
     # -- internals ---------------------------------------------------------
@@ -131,14 +154,20 @@ class Mailer:
                 server.send_message(message, to_addrs=envelope)
 
     def _record(self, run_type: str, audience: str, recipients: List[str],
-                ticket_count: int, new_count: int, status: str, error: str) -> None:
+                ticket_count: int, new_count: int, status: str, error: str,
+                copies: Optional[List[str]] = None) -> None:
         if self.db is None:
             return
+        # To first, then Cc. The column is short and gets truncated, and "who
+        # was this addressed to" is the question the audit trail is for.
+        addressed = ', '.join(recipients)
+        if copies:
+            addressed += ' (cc: ' + ', '.join(copies) + ')'
         try:
             self.db.insert('digest_run', {
                 'run_type': run_type,
                 'audience': audience,
-                'recipient': ', '.join(recipients)[:200],
+                'recipient': addressed[:200],
                 'ticket_count': ticket_count,
                 'new_count': new_count,
                 'sent_at': utc_now(),

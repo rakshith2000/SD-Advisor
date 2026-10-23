@@ -261,6 +261,21 @@ def create_app(config_path: Optional[str] = None) -> FastAPI:
         context.setdefault('user', auth.current_user(request))
         context.setdefault('now', utc_now())
 
+        # The queue selector in the navigation bar. Listed per account rather
+        # than globally - a lead sees their own queues and nothing else - and
+        # carried in the URL rather than stored, so a link to a board is a
+        # link to that board and not to whatever the recipient last chose.
+        if context.get('user') and 'nav_groups' not in context:
+            visible = scope_of(context['user'])
+            context['nav_groups'] = visible
+            asked = request.query_params.get('group')
+            # Validated against the same list that is offered. An
+            # out-of-scope value in the URL selects nothing, so it cannot be
+            # used to probe which queues exist.
+            context.setdefault(
+                'nav_group',
+                asked if asked and asked in visible else None)
+
         zone = tz_for(context.get('user'))
         context.setdefault('display_tz', zone)
         context.setdefault('display_tz_label', zone_label(zone))
@@ -815,11 +830,16 @@ def create_app(config_path: Optional[str] = None) -> FastAPI:
     # -----------------------------------------------------------------
 
     @app.get('/agents', response_class=HTMLResponse)
-    def agents_view(request: Request, user: Dict[str, Any] = Depends(require_user)):
-        visible = scope_of(user)
-        # `visible or None` would have meant board_rows saw None and returned
+    def agents_view(request: Request, user: Dict[str, Any] = Depends(require_user),
+                    group: Optional[str] = None):
+        # Honours the queue chosen in the navigation bar. Without it this page
+        # would roll every queue in scope into one table of agents while the
+        # board beside it showed one, and the two would disagree about how
+        # many tickets exist.
+        groups = narrow_scope(user, group)
+        # `groups or None` would have meant board_rows saw None and returned
         # every group - the same inversion as on /board.
-        rows = [] if not visible else builder.board_rows(assignment_groups=visible)
+        rows = [] if not groups else builder.board_rows(assignment_groups=groups)
         rollup = builder.by_agent(rows)
 
         compliance = builder.compliance_context([entry['agent'] for entry in rollup][:60])
@@ -871,15 +891,27 @@ def create_app(config_path: Optional[str] = None) -> FastAPI:
     # -----------------------------------------------------------------
 
     @app.get('/digest/preview', response_class=HTMLResponse)
-    def digest_preview(user: Dict[str, Any] = Depends(require_lead)):
+    def digest_preview(user: Dict[str, Any] = Depends(require_lead),
+                       group: Optional[str] = None):
         # Scoped as well as role-gated: a lead restricted to one queue should
         # preview the digest they would receive, not the one the whole desk
         # receives.
-        visible = scope_of(user)
-        if not visible:
-            raise HTTPException(status_code=403,
-                                detail='Your account has no assignment group scope')
-        return HTMLResponse(dispatcher.preview_lead_digest(assignment_groups=visible))
+        #
+        # One queue, because that is what a digest covers - a lead over three
+        # of them receives three separate emails, and a preview spanning all
+        # three would show a message nobody is ever sent. Follows the queue
+        # chosen in the navigation bar, falling back to the first in scope.
+        #
+        # An out-of-scope `group` is an error rather than a fallback: silently
+        # previewing a different queue than the one asked for is the wrong way
+        # round to fail, even on a read-only page.
+        groups = narrow_scope(user, group) if group else scope_of(user)
+        if not groups:
+            raise HTTPException(
+                status_code=403,
+                detail=(f'{group} is not in your scope' if group
+                        else 'Your account has no assignment group scope'))
+        return HTMLResponse(dispatcher.preview_lead_digest(assignment_groups=groups[:1]))
 
     @app.post('/digest/send')
     def digest_send(background: BackgroundTasks,

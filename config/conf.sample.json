@@ -112,10 +112,14 @@
     "scheduler": {
         "stream_interval_minutes": 10,
         "recommendation_interval_minutes": 60,
+
+        "_comment_hourly_full_sync": "Runs a full sync before each hourly LLM pass. Only the full pass walks what is already tracked, so it is the only thing that notices a ticket that was resolved or reassigned away - the delta cannot, because such a ticket has stopped matching the query. Set false on a large estate to restore the previous behaviour, where departures were cleared once a day by the digest and the board could show a resolved ticket for most of a day.",
+        "hourly_full_sync": true,
+
         "stats_refresh_cron": "0 2 * * *",
         "digests": [
             {
-                "_comment": "One entry per schedule, not per queue. An empty assignment_groups covers every configured queue; each lead still receives only the queues they are entitled to, so one entry does not mean one shared email.",
+                "_comment": "One entry per schedule, not per queue. An empty assignment_groups covers every configured queue, and one email is sent per queue - addressed to that queue's leads, copying every administrator, with the queue named in the subject.",
                 "name": "morning",
                 "cron": "30 7 * * 1-5",
                 "timezone": "Europe/London",

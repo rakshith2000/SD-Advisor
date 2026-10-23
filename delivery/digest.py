@@ -361,8 +361,13 @@ class DigestBuilder:
             'reasons': {r['incident_number']: self._reasons_for(r) for r in priority_rows},
         }
 
-    def build_agent_digest(self, agent: str, max_tickets: int = 15) -> Dict[str, Any]:
-        rows = self.board_rows(agent=agent)
+    def build_agent_digest(self, agent: str, max_tickets: int = 15,
+                           assignment_groups: Optional[List[str]] = None) -> Dict[str, Any]:
+        # Scoped like every other query. An agent who works two queues, only
+        # one of which this service covers, should be shown the one it covers
+        # - otherwise their mail and the board disagree about how many tickets
+        # they have, and the board is the one that can be checked.
+        rows = self.board_rows(agent=agent, assignment_groups=assignment_groups)
         return {
             'generated_at': utc_now(),
             'agent': agent,

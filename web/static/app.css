@@ -437,6 +437,51 @@ table.data td.num, table.data th.num { text-align: right;
 .account-item-danger { color: var(--status-critical); }
 
 /* ---------- timezone picker ---------- */
+/* The assignment group selector. Lists only the queues the account is
+   entitled to, so it is both a filter and the answer to "what can I see".
+
+   Weighted a little heavier than the timezone picker beside it: this one
+   changes which tickets are on the page, and a reader who has forgotten a
+   queue is selected would misread an empty board as a clean one. */
+
+.group-picker {
+  display: inline-flex;
+  align-items: center;
+  cursor: pointer;
+}
+
+.group-picker select {
+  font: 500 12px/1.4 var(--font);
+  color: var(--text-primary);
+  background: transparent;
+  border: 1px solid var(--grid);
+  border-radius: 4px;
+  padding: 3px 6px;
+  min-width: 0;
+  max-width: 220px;
+  cursor: pointer;
+}
+
+.group-picker select:hover {
+  border-color: var(--axis);
+  background: var(--surface-1);
+}
+
+.group-picker select:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.group-picker select:disabled { opacity: 0.55; cursor: progress; }
+
+/* One queue in scope: text, not a dropdown. A select with a single option
+   looks like a choice and is not one. */
+.group-single {
+  font: 500 12px/1.4 var(--font);
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
 /* Every timestamp on the page is rendered in the selected zone. Stored values
    are UTC throughout; this only changes presentation. Styled to read as part
    of the meta row rather than as a form control, because it is a view

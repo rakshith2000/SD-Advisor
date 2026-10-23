@@ -24,9 +24,16 @@
       <!--<span class="brand-text">Aged Ticket Advisor <span>&middot; {{ customer }}</span></span>-->
     </div>
     {% set path = request.url.path %}
+    {#
+      The chosen queue travels with the links rather than being remembered
+      server-side, so a board someone sends you is the board they were
+      looking at. Dropping it here instead would silently widen the next page
+      back to every queue in scope.
+    #}
+    {% set keep = ('?group=' ~ nav_group|urlencode) if nav_group else '' %}
     <nav class="nav">
-      <a href="/board"    class="{{ 'active' if path.startswith('/board') or path.startswith('/ticket') }}">Board</a>
-      <a href="/agents"   class="{{ 'active' if path.startswith('/agents') }}">By agent</a>
+      <a href="/board{{ keep }}"    class="{{ 'active' if path.startswith('/board') or path.startswith('/ticket') }}">Board</a>
+      <a href="/agents{{ keep }}"   class="{{ 'active' if path.startswith('/agents') }}">By agent</a>
       <a href="/accuracy" class="{{ 'active' if path.startswith('/accuracy') }}">Accuracy</a>
       {% if user.role == 'ADMIN' %}
       <a href="/settings/weights" class="{{ 'active' if path.startswith('/settings') }}">Weights</a>
@@ -36,11 +43,36 @@
       </a>
       {% endif %}
       {% if user.role in ('ADMIN', 'LEAD') %}
-      <a href="/digest/preview" target="_blank" rel="noopener">Digest preview</a>
+      <a href="/digest/preview{{ keep }}" target="_blank" rel="noopener">Digest preview</a>
       {% endif %}
     </nav>
     <div class="topbar-meta">
       {% if shadow_mode %}<span title="Nothing is being emailed to the wider team">Shadow mode</span>{% endif %}
+
+      {#
+        Assignment group. Only the queues this account is entitled to are
+        listed, so the control doubles as the answer to "what can I see".
+
+        Shown as plain text for a single queue: a dropdown with one option is
+        a control that cannot do anything, and offering it suggests there is
+        something else behind it.
+      #}
+      {% if nav_groups|length > 1 %}
+      <label class="group-picker" title="Assignment group">
+        <span class="visually-hidden">Assignment group</span>
+        <select id="group-select" aria-label="Assignment group"
+                onchange="selectGroup(this)">
+          <option value="">All my groups ({{ nav_groups|length }})</option>
+          {% for g in nav_groups %}
+          <option value="{{ g }}" {{ 'selected' if nav_group == g }}>{{ g }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      {% elif nav_groups %}
+      <span class="group-single" title="The only assignment group in your scope">
+        {{ nav_groups[0] }}
+      </span>
+      {% endif %}
 
       {#
         Every time on this page is rendered in the zone chosen here. Stored
@@ -113,6 +145,24 @@
     var next = current === 'dark' ? 'light' : 'dark';
     root.setAttribute('data-theme', next);
     localStorage.setItem('ata-theme', next);
+  }
+
+  // Rewrites the current URL rather than posting a preference, so the
+  // selection is in the address bar where it can be seen, bookmarked and
+  // sent to someone else.
+  function selectGroup(select) {
+    var url = new URL(window.location.href);
+    if (select.value) {
+      url.searchParams.set('group', select.value);
+    } else {
+      url.searchParams.delete('group');
+    }
+    // The agent filter belongs to the queue it was chosen in. Carrying it
+    // across would usually render an empty board, which reads as "this queue
+    // is clean" rather than "that person does not work here".
+    url.searchParams.delete('agent');
+    select.disabled = true;
+    window.location.assign(url.toString());
   }
 
   function toggleAccountMenu(button) {

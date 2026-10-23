@@ -196,7 +196,8 @@ g.code("""ServiceNow (READ ONLY)
         |
         v
   TIER 2 - hourly and before each digest
-    vector retrieval (similar resolved incidents + KB)
+    FULL sync (retires what has left the queue)  ->  signal refresh
+      -> vector retrieval (similar resolved incidents + KB)
       -> ONE structured Azure OpenAI call
       -> validated recommendation -> MySQL
     (input-hash cached: an unchanged ticket costs nothing)
@@ -206,8 +207,11 @@ g.code("""ServiceNow (READ ONLY)
     web board :8444 · ticket drill-down · JSON API · optional SNOW webhook
         |
         v
-  DELIVERY
-    daily lead digest · per-agent digest · risk alerts · Grafana""")
+  DELIVERY - one email per assignment group, never one shared email
+    daily lead digest   to that queue's leads, cc all admins
+    risk alerts         to that queue's leads and viewers, cc all admins
+    per-agent digest    to the agent, their own tickets only
+    web board · Grafana""")
 
 
 # =========================================================== SECTION 2 =====
@@ -1305,10 +1309,29 @@ print('sent - now check the inbox, and the junk folder')
 PY""")
 
 g.h2('10.4 Recipients')
-g.p('Digest recipients are not configured in conf.json. Leads are whoever holds an active '
-    'ADMIN or LEAD account in the advisor_user table with an email address set — created in '
-    'Section 13. A lead whose assignment_groups field is blank receives all groups; otherwise '
-    'they receive only digests covering their listed groups.')
+g.p('Recipients are not configured in conf.json. They are derived from the advisor_user table — '
+    'active accounts with an email address, created in Section 13 — and from each account\'s '
+    'assignment_groups.')
+g.p('One email is sent per assignment group, never one shared email covering several:')
+g.table(['Message', 'To', 'Cc', 'Subject'], [
+    ['Lead digest', 'LEAD accounts scoped to that group',
+     'Every ADMIN', 'Names the group'],
+    ['Risk alert', 'LEAD and VIEWER accounts scoped to that group',
+     'Every ADMIN', 'Names the group'],
+    ['Agent digest', 'The agent, their own tickets only', '—', '—'],
+], widths=[2.6, 5.4, 3.0, 3.4])
+g.p('A lead covering three groups therefore receives three messages. That is deliberate: each '
+    'one names its queue, is addressed to the people who own it, and can be forwarded or filed '
+    'on its own. A combined mail cannot be any of those things — and it would put one team\'s '
+    'incident descriptions and caller names in front of another team\'s lead.')
+g.callout('warn', 'A blank assignment_groups field no longer means "all groups" for a lead.',
+          'It means "not provisioned yet", exactly as it already did for VIEWER. Only ADMIN is '
+          'widened by an empty scope. An existing LEAD account with no groups set will see an '
+          'empty board and receive no digest — both of which look like success from the '
+          'outside, so run `python run.py doctor` after upgrading: the "account scope" check '
+          'lists every account in that state, and "queue cover" lists every configured queue '
+          'with no lead. A queue with no lead has its digest addressed to the administrators '
+          'rather than dropped.')
 
 
 # ========================================================== SECTION 11 =====
@@ -1414,6 +1437,7 @@ g.code("""{
     "scheduler": {
         "stream_interval_minutes": 10,
         "recommendation_interval_minutes": 60,
+        "hourly_full_sync": true,
         "stats_refresh_cron": "0 2 * * *",
         "digests": [
             {
@@ -1900,12 +1924,22 @@ g.code("""curl -s http://localhost:8444/healthz | python3 -m json.tool
 g.h2('16.5 Scheduled jobs installed')
 g.table(['Job ID', 'Trigger', 'What it does'], [
     ['stream', 'Every 10 minutes', 'Delta sync, signal refresh, risk alert emails. No LLM'],
-    ['recommend', 'Every 60 minutes', 'LLM recommendation pass over changed tickets'],
-    ['digest-<name>', 'Per configured cron', 'Full pass, then lead and agent digests'],
+    ['hourly', 'Every 60 minutes', 'Full sync, signal refresh, then the LLM recommendation pass'],
+    ['digest-<name>', 'Per configured cron', 'Full pass, then one lead digest per assignment group'],
     ['maintenance', '02:00 UTC daily', 'Full sync, index refresh, baseline rebuild, prune'],
 ], widths=[3.2, 3.6, 9.6], code_cols=(0,))
 g.p('Jobs are configured with coalesce and max_instances=1, so an overrunning run causes the '
     'next to be skipped rather than stacking up.')
+g.callout('info', 'Why the hourly job does a full sync rather than a delta.',
+          'The delta returns the rows ServiceNow reports as changed AND in scope. A ticket '
+          'that has been resolved, or reassigned to a team this service does not cover, has '
+          'stopped matching that query - so it is not in the delta and never will be. A query '
+          'returns what matches; it cannot return what stopped matching. Only the full pass '
+          'walks what is already tracked and notices what has departed. That used to happen '
+          'once a day inside the digest, which is why the board could carry a resolved ticket '
+          'for most of a day; hourly bounds it to the hour. Set scheduler.hourly_full_sync '
+          'false on a very large estate to restore the old behaviour - a full pass is the '
+          'heaviest regular call this service makes on ServiceNow.')
 
 
 # ========================================================== SECTION 17 =====
@@ -2747,6 +2781,7 @@ g.table(['Key', 'Type', 'Default', 'Required'], [
     ['thresholds.digest_max_tickets_per_agent', 'int', '25', 'No'],
     ['scheduler.stream_interval_minutes', 'int', '10', 'No'],
     ['scheduler.recommendation_interval_minutes', 'int', '60', 'No'],
+    ['scheduler.hourly_full_sync', 'bool', 'true', 'No — see §16.5'],
     ['scheduler.stats_refresh_cron', 'cron', '0 2 * * *', 'No'],
     ['scheduler.digests', 'list of objects', '[]', 'Yes, for email delivery'],
     ['mail.enabled', 'bool', 'true', 'No'],

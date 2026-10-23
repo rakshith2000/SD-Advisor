@@ -9,9 +9,13 @@ Two defects these exist for.
    not, which is the worst arrangement - it reads as enforced.
 
 2. visible_groups() returned every group when a user's scope was empty. That
-   was deliberate and correct while every account was created by hand, and
-   becomes wrong the moment accounts are created automatically on first SSO
-   login: the auto-provisioned role would default to seeing the whole estate.
+   was deliberate and correct while every account was created by hand and the
+   service covered one queue. It became wrong twice over: accounts are now
+   created automatically on first SSO login, and the service now covers
+   several queues, so "nobody set their groups" would put another team's
+   incident descriptions and caller names on a lead's board.
+
+   An empty scope now means "everything" for ADMIN alone.
 
 Both are about failing in the right direction. An empty scope must mean "show
 nothing", never "show everything"; and an out-of-scope ticket must be
@@ -48,17 +52,29 @@ class TestVisibleGroups:
         assert store.visible_groups(
             user(groups=['Service Desk']), ALL_GROUPS) == ['Service Desk']
 
-    def test_lead_with_no_scope_still_sees_everything(self, store):
-        """Existing hand-provisioned accounts must not change behaviour."""
-        assert store.visible_groups(user('LEAD'), ALL_GROUPS) == ALL_GROUPS
+    def test_lead_with_no_scope_sees_nothing(self, store):
+        """A lead leads a queue. Which one is a fact somebody has to record -
+        it cannot be defaulted to "all of them" once there is more than one,
+        because that default is a disclosure."""
+        assert store.visible_groups(user('LEAD'), ALL_GROUPS) == []
 
     def test_admin_with_no_scope_sees_everything(self, store):
+        """The one role an empty scope widens for. An administrator decides
+        access requests across the estate; they cannot do that through a
+        keyhole."""
         assert store.visible_groups(user('ADMIN'), ALL_GROUPS) == ALL_GROUPS
 
     def test_viewer_with_no_scope_sees_nothing(self, store):
         """The inversion. An auto-provisioned account starts entitled to
         nothing, not to the whole estate."""
         assert store.visible_groups(user('VIEWER'), ALL_GROUPS) == []
+
+    def test_only_admin_is_widened_by_an_empty_scope(self, store):
+        """Stated once, as a rule, so a fourth role cannot be added and
+        quietly inherit the wrong half of it."""
+        widened = [role for role in ('ADMIN', 'LEAD', 'VIEWER')
+                   if store.visible_groups(user(role), ALL_GROUPS)]
+        assert widened == ['ADMIN']
 
     def test_viewer_with_a_scope_sees_it(self, store):
         assert store.visible_groups(
@@ -78,9 +94,11 @@ class TestVisibleGroups:
             user(groups=['  service desk  ']), ALL_GROUPS) == ['Service Desk']
 
     def test_blank_entries_are_not_a_scope(self, store):
-        """['', '  '] must not read as "restricted to nothing" for a lead, nor
-        as a real restriction - it is an empty scope."""
-        assert store.visible_groups(user('LEAD', ['', '  ']), ALL_GROUPS) == ALL_GROUPS
+        """['', '  '] is an empty scope, not a restriction to nothing - so it
+        follows the empty-scope rule for the role rather than being treated as
+        a list with entries in it."""
+        assert store.visible_groups(user('ADMIN', ['', '  ']), ALL_GROUPS) == ALL_GROUPS
+        assert store.visible_groups(user('LEAD', ['', '  ']), ALL_GROUPS) == []
         assert store.visible_groups(user('VIEWER', ['', '  ']), ALL_GROUPS) == []
 
 
@@ -95,8 +113,11 @@ class TestCanSeeGroup:
     def test_out_of_scope(self, store):
         assert not store.can_see_group(user(groups=['Service Desk']), 'Network Operations')
 
-    def test_unrestricted_lead_sees_any_group(self, store):
-        assert store.can_see_group(user('LEAD'), 'Network Operations')
+    def test_unrestricted_admin_sees_any_group(self, store):
+        assert store.can_see_group(user('ADMIN'), 'Network Operations')
+
+    def test_unrestricted_lead_sees_none(self, store):
+        assert not store.can_see_group(user('LEAD'), 'Network Operations')
 
     def test_unrestricted_viewer_sees_none(self, store):
         assert not store.can_see_group(user('VIEWER'), 'Network Operations')
@@ -108,9 +129,11 @@ class TestCanSeeGroup:
     def test_a_ticket_with_no_group_is_visible_only_to_unrestricted_users(self, store, group):
         """It belongs to no queue, so it cannot be in a scoped user's queue -
         but it must not become invisible to everyone, or an unassigned ticket
-        would silently drop off the estate."""
-        assert store.can_see_group(user('LEAD'), group)
+        would silently drop off the estate. Administrators are now the only
+        ones who hold it, which is also why they are the only ones who can
+        notice it has no owner."""
         assert store.can_see_group(user('ADMIN'), group)
+        assert not store.can_see_group(user('LEAD'), group)
         assert not store.can_see_group(user(groups=['Service Desk']), group)
         assert not store.can_see_group(user('VIEWER'), group)
 

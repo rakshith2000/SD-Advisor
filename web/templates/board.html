@@ -105,15 +105,19 @@
 {% endif %}
 
 <form class="filters" method="get" action="/board">
-  <div class="field">
-    <label for="group">Group</label>
-    <select id="group" name="group">
-      <option value="">All in scope</option>
-      {% for g in visible_groups %}
-      <option value="{{ g }}" {{ 'selected' if filters.group == g }}>{{ g }}</option>
-      {% endfor %}
-    </select>
-  </div>
+  {#
+    The assignment group lives in the navigation bar, where it applies to
+    every page. Carried through here as a hidden field so pressing Apply
+    keeps the selected queue - without it, applying any other filter would
+    quietly widen the board back to every queue in scope.
+
+    Deliberately not a second dropdown. Two controls for one parameter
+    disagree the moment either is changed, and the one that loses is
+    whichever the reader was not looking at.
+  #}
+  {% if filters.group %}
+  <input type="hidden" name="group" value="{{ filters.group }}">
+  {% endif %}
 
   <div class="field">
     <label for="agent">Agent</label>
@@ -167,7 +171,9 @@
   </label>
 
   <button class="btn primary" type="submit">Apply</button>
-  <a class="btn" href="/board">Reset</a>
+  {# Clears the filters, keeps the queue - that is chosen in the navigation
+     bar and is not one of the things this form is resetting. #}
+  <a class="btn" href="/board{{ ('?group=' ~ filters.group|urlencode) if filters.group else '' }}">Reset</a>
 </form>
 
 <div class="card">

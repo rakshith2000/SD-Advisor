@@ -38,7 +38,11 @@
       {{ alerts|length }} new risk alert{{ 's' if alerts|length != 1 }}
     </div>
     <div style="font:400 12px/1.5 {{ FONT }};color:{{ INK2 }};padding-top:3px;">
-      Detected {{ generated_at | datefmt('%H:%M on %a %d %b') }} {{ display_tz_abbrev }}. Each ticket alerts once per day.
+      {# One mail per assignment group, so saying which one is not decoration:
+         a lead covering three queues receives three of these. #}
+      {% if group %}{{ group }} &middot; {% endif %}detected
+      {{ generated_at | datefmt('%H:%M on %a %d %b') }} {{ display_tz_abbrev }}.
+      Each ticket alerts once per day.
     </div>
   </td></tr>
 

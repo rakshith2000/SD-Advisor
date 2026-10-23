@@ -3,17 +3,25 @@
 The service was built against a single queue, where "every configured group"
 and "every group this reader may see" are the same set and the difference
 cannot show up. They are not the same set once a second queue is added, and
-the places that conflated them were not wrong so much as untested:
+the places that conflated them were not wrong so much as untested: the lead
+digest and the risk alerts each built one email over every configured queue
+and sent it to everyone scoped to any of them. Both bodies carry short
+descriptions and caller names, so the failure is a disclosure, and nothing
+about it is visible to the sender.
 
-  * the lead digest built one email over every configured queue and sent it to
-    everyone scoped to any of them
-  * risk alerts did the same with the alert bodies
+The delivery model is now one email per queue:
 
-Both carry short descriptions and caller names, so the failure is a
-disclosure, not a cosmetic one, and nothing about it is visible to the sender.
-These tests pin the scoping. The label tests cover the other half of the ask -
-that nothing in the UI or the mail tells a Desktop Support lead their tickets
-are awaiting the Service Desk.
+    to    the leads of that queue (plus viewers, for risk alerts)
+    cc    every administrator
+    subj  names the queue
+
+A lead over three queues therefore gets three messages. That is the point -
+each one can be forwarded, filed or escalated on its own, which a combined
+mail cannot be. The administrators' Cc is what keeps the estate visible to
+the people who administer it without scoping each of them into every queue.
+
+The label tests cover the other half: nothing in the UI or the mail tells a
+Desktop Support lead their tickets are awaiting the Service Desk.
 """
 
 import sys
@@ -48,9 +56,9 @@ class FakeSettings:
 class FakeDb:
     """Honours the conditions it is given.
 
-    leads_for selects on role IN ('ADMIN','LEAD') and active = 1, and a fake
-    that ignored that would let a Viewer through here and pass a test the real
-    query would fail.
+    recipients_for selects on role and active = 1, and a fake that ignored
+    that would let a viewer onto the digest and pass a test the real query
+    would fail.
     """
 
     def __init__(self, users):
@@ -83,80 +91,102 @@ def dispatcher(users, **settings):
     return d
 
 
-def scopes(audiences):
-    """Normalised for comparison: {frozenset(groups): sorted(recipients)}."""
-    return {frozenset(a['groups']): sorted(a['recipients']) for a in audiences}
-
-
 # ---------------------------------------------------------------------------
 # who gets what
 # ---------------------------------------------------------------------------
 
-class TestAudiences:
-    def test_a_single_queue_behaves_exactly_as_before(self):
-        """The shape this was built for. One bucket, everybody in it."""
-        d = dispatcher([user('asha', [SD]), user('raj', [SD])])
-        assert scopes(d.audiences_for([SD])) == {
-            frozenset([SD]): ['asha@example.com', 'raj@example.com']}
+class TestCovers:
+    """The one rule everything else is built on."""
 
-    def test_each_lead_is_bucketed_by_the_queues_they_cover(self):
-        d = dispatcher([user('asha', [SD]), user('raj', [DS]), user('mei', [NW])])
-        assert scopes(d.audiences_for(ALL)) == {
-            frozenset([SD]): ['asha@example.com'],
-            frozenset([DS]): ['raj@example.com'],
-            frozenset([NW]): ['mei@example.com'],
-        }
+    def test_a_scoped_account_covers_its_own_queues(self):
+        assert Dispatcher._covers(user('asha', [SD, DS]), SD)
+        assert not Dispatcher._covers(user('asha', [SD, DS]), NW)
 
-    def test_leads_covering_the_same_queues_share_one_email(self):
-        """One bucket per distinct scope, not one per queue - otherwise a lead
-        over three queues gets three mails every morning."""
-        d = dispatcher([user('asha', [SD, DS]), user('raj', [DS, SD])])
-        audiences = d.audiences_for(ALL)
-        assert len(audiences) == 1
-        assert sorted(audiences[0]['recipients']) == ['asha@example.com', 'raj@example.com']
-        assert set(audiences[0]['groups']) == {SD, DS}
+    def test_matching_ignores_case_and_padding(self):
+        assert Dispatcher._covers(user('asha', ['  service desk ']), SD)
 
-    def test_a_scope_is_intersected_with_the_run_never_unioned(self):
-        """A lead entitled to Network Operations still does not see it in a
-        run that is only covering the other two."""
-        d = dispatcher([user('asha', [SD, NW])])
-        audiences = d.audiences_for([SD, DS])
-        assert set(audiences[0]['groups']) == {SD}
+    def test_an_empty_scope_covers_everything_for_an_administrator(self):
+        assert Dispatcher._covers(user('root', [], role='ADMIN'), NW)
 
-    def test_a_lead_with_no_overlap_is_not_sent_an_empty_digest(self):
-        d = dispatcher([user('mei', [NW])])
-        assert d.audiences_for([SD, DS]) == []
+    def test_an_empty_scope_covers_nothing_for_anyone_else(self):
+        """The disclosure this prevents: a lead whose groups nobody set
+        receiving every other team's incidents by email."""
+        assert not Dispatcher._covers(user('asha', [], role='LEAD'), SD)
+        assert not Dispatcher._covers(user('watcher', [], role='VIEWER'), SD)
 
-    def test_an_unrestricted_account_covers_the_whole_run(self):
-        """An empty scope has always meant 'everything' for a lead, and the
-        board relies on the same rule."""
-        d = dispatcher([user('admin', [], role='ADMIN')])
-        assert set(d.audiences_for(ALL)[0]['groups']) == set(ALL)
+    def test_it_agrees_with_the_board(self):
+        """Mail scope and UI scope have to be the same rule. A lead who sees
+        one queue in the browser and receives three by email is still a
+        disclosure - it just happens where nobody is looking."""
+        from web.auth import UserStore
 
-    def test_a_lead_without_an_address_is_skipped(self):
-        d = dispatcher([dict(user('ghost', [SD]), email=None)])
-        assert d.audiences_for([SD]) == []
+        store = UserStore(db=None)
+        for role in ('ADMIN', 'LEAD', 'VIEWER'):
+            for scope in ([], [SD], [SD, DS]):
+                account = user('x', scope, role=role)
+                browser = {'username': 'x', 'role': role, 'groups': scope}
+                for group in ALL:
+                    assert (Dispatcher._covers(account, group)
+                            == store.can_see_group(browser, group)), (
+                        f'{role} scope={scope} group={group}')
 
-    def test_a_viewer_is_not_a_digest_recipient(self):
+
+class TestAudienceForGroup:
+    def test_leads_are_addressed_and_admins_copied(self):
+        d = dispatcher([user('asha', [SD]), user('root', [], role='ADMIN')])
+        audience = d.audience_for_group(SD)
+        assert audience['to'] == ['asha@example.com']
+        assert audience['cc'] == ['root@example.com']
+
+    def test_only_this_queues_leads_are_addressed(self):
+        d = dispatcher([user('asha', [SD]), user('raj', [DS])])
+        assert d.audience_for_group(SD)['to'] == ['asha@example.com']
+
+    def test_a_lead_over_several_queues_is_on_each_of_them(self):
+        d = dispatcher([user('asha', [SD, DS])])
+        assert d.audience_for_group(SD)['to'] == ['asha@example.com']
+        assert d.audience_for_group(DS)['to'] == ['asha@example.com']
+        assert d.audience_for_group(NW)['to'] == []
+
+    def test_an_admin_scoped_to_the_queue_is_not_addressed_twice(self):
+        """They would be in To as a lead and in Cc as an administrator. Two
+        copies is how a mail client decides the message is a duplicate."""
+        d = dispatcher([user('root', [SD], role='ADMIN')])
+        audience = d.audience_for_group(SD, roles=('LEAD', 'ADMIN'))
+        assert audience['to'] == ['root@example.com']
+        assert audience['cc'] == []
+
+    def test_viewers_are_not_on_the_digest(self):
         d = dispatcher([user('watcher', [SD], role='VIEWER')])
-        assert d.audiences_for([SD]) == []
+        assert d.audience_for_group(SD, roles=('LEAD',))['to'] == []
 
-    def test_no_queues_means_no_audiences(self):
+    def test_viewers_are_on_the_risk_alerts(self):
+        """An alert is something to act on now, and the viewers are the people
+        working the queue."""
+        d = dispatcher([user('watcher', [SD], role='VIEWER')])
+        assert (d.audience_for_group(SD, roles=('LEAD', 'VIEWER'))['to']
+                == ['watcher@example.com'])
+
+    def test_an_account_without_an_address_is_skipped(self):
+        d = dispatcher([dict(user('ghost', [SD]), email=None)])
+        assert d.audience_for_group(SD)['to'] == []
+
+    def test_an_unled_queue_falls_back_to_the_administrators(self):
+        """Not dropped. An unstaffed queue is a provisioning gap, and a digest
+        that silently goes nowhere is how it stays one."""
+        d = dispatcher([user('root', [], role='ADMIN')])
+        audience = d.audience_for_group(NW)
+        assert audience['to'] == ['root@example.com']
+        assert audience['cc'] == []
+        assert audience['orphaned'] is True
+
+    def test_a_staffed_queue_is_not_flagged_as_orphaned(self):
         d = dispatcher([user('asha', [SD])])
-        assert d.audiences_for([]) == []
-        assert d.audiences_for(None) == []
+        assert d.audience_for_group(SD)['orphaned'] is False
 
-    def test_group_matching_ignores_case_and_padding(self):
-        d = dispatcher([user('asha', ['  service desk '])])
-        audiences = d.audiences_for([SD])
-        # The configured spelling wins, so the digest query matches the data.
-        assert audiences[0]['groups'] == [SD]
-
-    def test_the_configured_spelling_is_what_reaches_the_query(self):
-        """board_rows compares against assignment_group verbatim, so handing
-        it the user's casing would quietly return nothing."""
-        d = dispatcher([user('asha', ['SERVICE DESK', 'desktop support'])])
-        assert set(d.audiences_for(ALL)[0]['groups']) == {SD, DS}
+    def test_an_inactive_account_is_not_a_recipient(self):
+        d = dispatcher([dict(user('gone', [SD]), active=0)])
+        assert d.audience_for_group(SD)['to'] == []
 
 
 class TestLeadsFor:
@@ -222,11 +252,11 @@ class Sent:
     def __init__(self):
         self.messages = []
 
-    def send(self, to, subject, html_body, run_type=None, audience=None,
-             ticket_count=0, new_count=0, **kw):
-        self.messages.append({'to': list(to), 'subject': subject,
-                              'body': html_body, 'run_type': run_type,
-                              'tickets': ticket_count})
+    def send(self, to, subject, html_body, cc=None, run_type=None,
+             audience=None, ticket_count=0, new_count=0, **kw):
+        self.messages.append({'to': list(to), 'cc': list(cc or []),
+                              'subject': subject, 'body': html_body,
+                              'run_type': run_type, 'tickets': ticket_count})
         return True
 
 
@@ -278,69 +308,155 @@ def ticket(number, group, alert='SLA_BREACHED'):
 ROWS = [ticket('INC_SD', SD), ticket('INC_DS', DS), ticket('INC_NW', NW)]
 
 
+def bodies(messages):
+    """Everything each address was actually shown, To or Cc."""
+    seen = {}
+    for message in messages:
+        for address in message['to'] + message['cc']:
+            seen.setdefault(address, []).append(message['body'])
+    return seen
+
+
 class TestNoCrossQueueDisclosure:
     def test_the_lead_digest_carries_only_the_recipients_own_queues(self):
         """The bug: one digest over every configured queue, mailed to everyone
-        scoped to any of them. The body carries descriptions and caller names."""
+        scoped to any of them. The body carries descriptions and caller
+        names."""
         d = wired([user('asha', [SD]), user('raj', [DS])], ROWS)
         d.send_lead_digest(ALL)
 
-        by_recipient = {m['to'][0]: m['body'] for m in d.mailer.messages}
-        assert by_recipient['asha@example.com'] == 'INC_SD'
-        assert by_recipient['raj@example.com'] == 'INC_DS'
-        for body in by_recipient.values():
-            assert 'INC_NW' not in body
+        seen = bodies(d.mailer.messages)
+        assert seen['asha@example.com'] == ['INC_SD']
+        assert seen['raj@example.com'] == ['INC_DS']
+        assert 'INC_NW' not in ' '.join(sum(seen.values(), []))
 
-    def test_one_email_per_distinct_scope_not_per_queue(self):
+    def test_one_email_per_queue_even_for_a_lead_who_covers_several(self):
+        """Three separate messages, each nameable and forwardable on its own.
+        A combined mail cannot be split by whoever receives it."""
         d = wired([user('asha', [SD, DS])], ROWS)
         d.send_lead_digest(ALL)
-        assert len(d.mailer.messages) == 1
-        assert d.mailer.messages[0]['body'] == 'INC_SD INC_DS'
 
-    def test_an_unrestricted_lead_still_sees_everything(self):
-        d = wired([user('admin', [], role='ADMIN')], ROWS)
+        assert len(d.mailer.messages) == 2
+        assert sorted(m['body'] for m in d.mailer.messages) == ['INC_DS', 'INC_SD']
+
+    def test_the_subject_names_the_queue(self):
+        d = wired([user('asha', [SD, DS])], ROWS)
         d.send_lead_digest(ALL)
-        assert d.mailer.messages[0]['body'] == 'INC_SD INC_DS INC_NW'
+
+        for message in d.mailer.messages:
+            group = SD if 'INC_SD' in message['body'] else DS
+            assert message['subject'].startswith(group), message['subject']
+
+    def test_administrators_are_copied_on_every_queue(self):
+        d = wired([user('asha', [SD]), user('raj', [DS]),
+                   user('root', [], role='ADMIN')], ROWS)
+        d.send_lead_digest([SD, DS])
+
+        assert len(d.mailer.messages) == 2
+        for message in d.mailer.messages:
+            assert message['cc'] == ['root@example.com']
+        assert sorted(bodies(d.mailer.messages)['root@example.com']) == [
+            'INC_DS', 'INC_SD']
+
+    def test_an_unled_queue_reaches_the_administrators_rather_than_nobody(self):
+        d = wired([user('root', [], role='ADMIN')], ROWS)
+        result = d.send_lead_digest([NW])
+
+        assert d.mailer.messages[0]['to'] == ['root@example.com']
+        assert d.mailer.messages[0]['body'] == 'INC_NW'
+        assert result['digests'][0]['orphaned'] is True
 
     def test_a_queue_with_nothing_aged_sends_no_email(self):
         d = wired([user('mei', [NW])], [ticket('INC_SD', SD)])
-        result = d.send_lead_digest(ALL)
+        result = d.send_lead_digest([NW])
         assert d.mailer.messages == []
         assert result['sent'] == 0 and result['reason'] == 'empty'
 
-    def test_the_subject_names_no_queue(self):
-        d = wired([user('asha', [SD])], ROWS)
-        d.send_lead_digest(ALL)
-        assert 'Service Desk' not in d.mailer.messages[0]['subject']
+    def test_an_empty_queue_does_not_stop_the_others(self):
+        """One quiet queue must not short-circuit the loop."""
+        d = wired([user('asha', [SD]), user('mei', [NW])],
+                  [ticket('INC_SD', SD)])
+        result = d.send_lead_digest([NW, SD])
+        assert [m['body'] for m in d.mailer.messages] == ['INC_SD']
+        assert result['sent'] == 1
 
-    def test_risk_alerts_are_filtered_the_same_way(self):
-        """Same disclosure, different surface - the alert body carries the
-        short description of every incident in the run."""
-        d = wired([user('asha', [SD]), user('raj', [DS])], ROWS)
-        d.send_risk_alerts(ROWS)
-
-        by_recipient = {m['to'][0]: m['body'] for m in d.mailer.messages}
-        assert by_recipient['asha@example.com'] == 'INC_SD'
-        assert by_recipient['raj@example.com'] == 'INC_DS'
-
-    def test_a_lead_with_no_alerts_in_their_queues_is_not_emailed(self):
-        d = wired([user('mei', [NW])], ROWS)
-        d.send_risk_alerts([ticket('INC_SD', SD)])
+    def test_a_lead_with_no_scope_receives_nothing(self):
+        """Previously an empty scope meant every queue, so this lead would
+        have been sent the whole estate."""
+        d = wired([user('asha', [], role='LEAD')], ROWS)
+        result = d.send_lead_digest(ALL)
         assert d.mailer.messages == []
+        assert result['sent'] == 0
 
-    def test_no_recipients_is_reported_rather_than_silently_nothing(self):
+    def test_no_recipients_at_all_is_reported(self):
         d = wired([], ROWS)
         assert d.send_lead_digest(ALL)['reason'] == 'no_recipients'
-        assert d.send_risk_alerts(ROWS)['reason'] == 'no_recipients'
 
     def test_an_empty_argument_falls_back_to_the_configured_queues(self):
         """How the scheduler asks for 'everything': a digest entry with no
-        assignment_groups covers whatever is configured."""
-        d = wired([user('admin', [], role='ADMIN')], ROWS)
+        assignment_groups covers whatever is configured - as one email each,
+        not one shared email."""
+        d = wired([user('asha', [SD]), user('raj', [DS]), user('mei', [NW])], ROWS)
         d.send_lead_digest([])
-        assert d.mailer.messages[0]['body'] == 'INC_SD INC_DS INC_NW'
+        assert sorted(m['body'] for m in d.mailer.messages) == [
+            'INC_DS', 'INC_NW', 'INC_SD']
 
     def test_no_configured_queues_is_distinguished_from_no_recipients(self):
         """Different remedies, and a zero count alone cannot tell them apart."""
         d = wired([user('asha', [SD])], ROWS, assignment_groups=[])
         assert d.send_lead_digest([])['reason'] == 'no_groups'
+
+
+class TestRiskAlerts:
+    def test_alerts_are_split_by_queue(self):
+        d = wired([user('asha', [SD]), user('raj', [DS])], ROWS)
+        d.send_risk_alerts(ROWS)
+
+        seen = bodies(d.mailer.messages)
+        assert seen['asha@example.com'] == ['INC_SD']
+        assert seen['raj@example.com'] == ['INC_DS']
+
+    def test_the_subject_names_the_queue(self):
+        d = wired([user('asha', [SD])], ROWS)
+        d.send_risk_alerts([ticket('INC_SD', SD)])
+        assert d.mailer.messages[0]['subject'].startswith(SD)
+
+    def test_viewers_are_addressed_as_well_as_leads(self):
+        """Wider than the digest: an alert is something to act on now, and the
+        viewers are the people working the queue."""
+        d = wired([user('asha', [SD]), user('watcher', [SD], role='VIEWER')], ROWS)
+        d.send_risk_alerts([ticket('INC_SD', SD)])
+        assert sorted(d.mailer.messages[0]['to']) == [
+            'asha@example.com', 'watcher@example.com']
+
+    def test_administrators_are_copied(self):
+        d = wired([user('asha', [SD]), user('root', [], role='ADMIN')], ROWS)
+        d.send_risk_alerts([ticket('INC_SD', SD)])
+        assert d.mailer.messages[0]['cc'] == ['root@example.com']
+
+    def test_a_queue_with_no_alerts_is_not_emailed(self):
+        d = wired([user('mei', [NW]), user('asha', [SD])], ROWS)
+        d.send_risk_alerts([ticket('INC_SD', SD)])
+        assert [m['to'] for m in d.mailer.messages] == [['asha@example.com']]
+
+    def test_an_alert_with_no_assignment_group_is_reported_not_guessed(self):
+        """It belongs to no queue, so there is no correct audience. Sending it
+        to one anyway puts an unowned ticket in front of a team that does not
+        own it either."""
+        d = wired([user('asha', [SD]), user('root', [], role='ADMIN')], ROWS)
+        result = d.send_risk_alerts([ticket('INC_ORPHAN', '')])
+
+        assert d.mailer.messages == []
+        assert result['ungrouped'] == 1
+        assert result['reason'] == 'no_groups'
+
+    def test_no_alerts_is_not_an_error(self):
+        d = wired([user('asha', [SD])], ROWS)
+        assert d.send_risk_alerts([]) == {'sent': 0, 'alerts': 0}
+
+    def test_every_alert_is_delivered_somewhere(self):
+        """The count that would catch a filter dropping rows on the floor."""
+        d = wired([user('asha', [SD]), user('raj', [DS]), user('mei', [NW])], ROWS)
+        result = d.send_risk_alerts(ROWS)
+        assert result['delivered'] == len(ROWS)
+        assert result['groups'] == 3

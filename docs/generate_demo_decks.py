@@ -488,12 +488,13 @@ WEIGHT_ROWS = [(WEIGHT_NAMES[k], v, WEIGHT_DESC[k])
 CADENCE = [
     ('Sync', 'Delta read of changed incidents, recompute every signal, '
              'fire risk alerts. No AI in this loop.', 'every 10 min'),
-    ('Advise', 'Language model pass over tickets whose content actually '
-               'changed. Everything else is served from cache.', 'hourly'),
-    ('Digest', 'Ranked email to leads, then a short list to each agent.',
-     'daily, per queue'),
-    ('Maintain', 'Full sync, retire departed tickets, rebuild the evidence '
-                 'index and resolution baselines.', 'nightly'),
+    ('Refresh', 'Full sync - retires tickets that have been resolved or '
+                'moved to another team - then a language model pass over '
+                'whatever actually changed.', 'hourly'),
+    ('Digest', 'One ranked email per assignment group to its leads, then a '
+               'short list to each agent.', 'daily, per queue'),
+    ('Maintain', 'Rebuild the evidence index and the resolution baselines.',
+     'nightly'),
 ]
 
 
@@ -607,13 +608,13 @@ def overview():
              'Ranked worst-first, filtered to your queues. The top ten is '
              'normally the whole job.'),
             ('Daily lead digest',
-             'What is new, what got worse, and what is waiting on us - in '
-             'one email, before the shift.'),
+             'What is new, what got worse, and what is waiting on us - one '
+             'email per assignment group, before the shift.'),
             ('Per-agent digest',
              'A short list for each agent covering only their own tickets.'),
             ('Risk alerts',
              'Breach, inactivity and unanswered-caller events, once per '
-             'ticket per type per day.'),
+             'ticket per type per day, split by group.'),
             ('Ticket page',
              'Signals, score breakdown, full activity, and drafts you can '
              'copy straight out.'),
@@ -1095,15 +1096,18 @@ def detailed():
         'Roles',
         ['Role', 'Who', 'Can'],
         [['Viewer', 'Agents, managers',
-          'See the board and tickets for their own queues'],
+          'See the board and tickets for their own queues; receive that '
+          'queue\'s risk alerts'],
          ['Lead', 'Team leads',
           'All of the above, plus record verdicts, snooze, request re-analysis, '
-          'receive the digest'],
+          'receive their queues\' digests'],
          ['Admin', 'Application team',
-          'All of the above, plus tune weights and approve role requests']],
+          'Every queue, plus tune weights, approve role requests, and copied '
+          'on all outbound mail']],
         widths=[14, 24, 62],
         lead='Sign-in is through Keycloak with your existing account. A new '
-             'user is a Viewer until somebody says otherwise.',
+             'user is a Viewer until somebody says otherwise. Everyone sees '
+             'only the assignment groups they have been given.',
         notes='')
 
     d.bullets(

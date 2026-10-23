@@ -526,14 +526,24 @@ class UserStore:
     def _unrestricted(user: Dict[str, Any]) -> bool:
         """Does an empty scope mean "everything" for this user?
 
-        Yes for LEAD and ADMIN - that is the long-standing behaviour and every
-        account provisioned by hand relies on it. No for VIEWER, because a
-        VIEWER account is created automatically on first SSO login and an
-        empty scope there means "not provisioned yet", not "trusted with the
-        whole estate". Defaulting the auto-created role to see everything is
-        the failure this inversion exists to prevent.
+        Administrators only. They administer the service rather than a queue,
+        and the alternative - an estate nobody can see in full - makes the
+        access requests undecidable.
+
+        For LEAD and VIEWER an empty scope means "not provisioned yet". That
+        used to be true only of VIEWER; it now applies to LEAD as well,
+        because the service covers several assignment groups and a lead of one
+        of them must not be shown another's incident descriptions and caller
+        names simply because nobody got round to setting their groups.
+
+        The consequence is worth stating plainly: an existing LEAD account
+        with no assignment groups set now sees an empty board rather than
+        everything. That is the intended direction to fail in - the board says
+        so and offers the access request - and `run.py doctor` lists every
+        account in that state so it can be fixed deliberately rather than
+        discovered by someone staring at an empty page.
         """
-        return user.get('role') != 'VIEWER'
+        return user.get('role') == 'ADMIN'
 
     def visible_groups(self, user: Dict[str, Any],
                        all_groups: List[str]) -> List[str]:

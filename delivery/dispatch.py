@@ -11,7 +11,7 @@ resolved the digest still goes to the leads rather than silently vanishing.
 
 import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Sequence
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
@@ -81,6 +81,21 @@ class Dispatcher:
         return [g.strip() for g in (user.get('assignment_groups') or '').split(',')
                 if g.strip()]
 
+    @classmethod
+    def _covers(cls, user: Dict[str, Any], group: str) -> bool:
+        """Whether this account is responsible for one assignment group.
+
+        An empty scope means every group for an administrator and no group
+        for anyone else - the same rule the board enforces in
+        UserStore._unrestricted, and it has to be the same rule. A lead who
+        can see one queue in the UI but receives three by email is still a
+        disclosure; it just happens where nobody is looking.
+        """
+        scope = {g.lower() for g in cls._scope_of(user)}
+        if not scope:
+            return user.get('role') == 'ADMIN'
+        return str(group or '').strip().lower() in scope
+
     def leads_for(self, assignment_groups: Optional[List[str]] = None) -> List[Dict[str, Any]]:
         users = self.db.retrieve('advisor_user', conditions=[
             {'col': 'active', 'op': 'eq', 'val': 1},
@@ -90,57 +105,46 @@ class Dispatcher:
         if not assignment_groups:
             return [u for u in users if u.get('email')]
 
-        wanted = {g.strip().lower() for g in assignment_groups}
-        matched = []
-        for user in users:
-            if not user.get('email'):
-                continue
-            scoped = {g.lower() for g in self._scope_of(user)}
-            # No group restriction on the user means "all groups".
-            if not scoped or wanted & scoped:
-                matched.append(user)
-        return matched
+        return [u for u in users if u.get('email')
+                and any(self._covers(u, g) for g in assignment_groups)]
 
-    def audiences_for(self, assignment_groups: List[str]) -> List[Dict[str, Any]]:
-        """Group lead recipients by the queues each of them may actually see.
+    def recipients_for(self, group: str,
+                       roles: Sequence[str] = ('LEAD',)) -> List[str]:
+        """Deliverable addresses for one assignment group, in the given roles."""
+        users = self.db.retrieve('advisor_user', conditions=[
+            {'col': 'active', 'op': 'eq', 'val': 1},
+            {'col': 'role', 'op': 'i', 'val': list(roles)},
+        ], order_by='username')
+        return [u['email'] for u in users
+                if u.get('email') and self._covers(u, group)]
 
-        With one queue this is a single bucket and the distinction does not
-        arise. With several it is the difference between a correct digest and
-        a disclosure: building one mail over every configured queue and
-        sending it to everyone scoped to any of them puts another team's
-        incident descriptions and caller names in front of a lead who is not
-        entitled to them.
+    def audience_for_group(self, group: str,
+                           roles: Sequence[str] = ('LEAD',)) -> Dict[str, List[str]]:
+        """Who to write to about one queue, and who to copy.
 
-        One bucket per distinct effective scope rather than one per queue, so
-        a lead who covers three queues still receives one email containing
-        exactly those three, not three emails or a fourth team's tickets.
+        To: the people who own the queue. Cc: every administrator, so there is
+        a standing record of what each team was told without an administrator
+        having to be scoped into every queue by hand.
+
+        A queue with no lead falls back to addressing the administrators
+        directly rather than dropping the mail. An unstaffed queue is a
+        provisioning gap, and a digest that silently goes nowhere is how it
+        stays one - the count in the job result would read zero with no
+        indication that there was anything to send.
         """
-        wanted = [g for g in (assignment_groups or []) if str(g).strip()]
-        if not wanted:
-            return []
+        to = self.recipients_for(group, roles)
+        cc = [a['email'] for a in self.admins()]
 
-        lowered = {g.lower(): g for g in wanted}
-        buckets: Dict[tuple, Dict[str, Any]] = {}
+        if not to:
+            log.warning('No %s with %s in scope - addressing the digest for that '
+                        'queue to the administrators instead',
+                        '/'.join(roles).lower(), group)
+            return {'to': cc, 'cc': [], 'orphaned': True}
 
-        for user in self.leads_for(wanted):
-            scope = self._scope_of(user)
-            if scope:
-                # Intersected, never unioned. A lead entitled to a queue this
-                # run is not covering has no business seeing it here either.
-                effective = [lowered[g.lower()] for g in scope if g.lower() in lowered]
-            else:
-                # An unrestricted account - the long-standing meaning of an
-                # empty scope for a lead - sees the whole run.
-                effective = list(wanted)
-
-            if not effective:
-                continue
-
-            key = tuple(sorted(g.lower() for g in effective))
-            bucket = buckets.setdefault(key, {'groups': effective, 'recipients': []})
-            bucket['recipients'].append(user['email'])
-
-        return list(buckets.values())
+        addressed = {t.strip().lower() for t in to}
+        return {'to': to,
+                'cc': [c for c in cc if c.strip().lower() not in addressed],
+                'orphaned': False}
 
     def admins(self) -> List[Dict[str, Any]]:
         """Administrators with a deliverable address.
@@ -220,48 +224,56 @@ class Dispatcher:
 
     def send_lead_digest(self, assignment_groups: Optional[List[str]] = None,
                          run_type: str = 'daily_digest') -> Dict[str, Any]:
-        """One digest per distinct recipient scope.
+        """One digest per assignment group.
 
-        Not one digest over every configured queue: see audiences_for. With a
-        single queue this sends exactly what it always did.
+        Deliberately one email per queue rather than one per reader. A lead
+        covering three queues gets three messages, and that is the point: each
+        one names its queue in the subject, is addressed to the people who own
+        that queue, and can be forwarded or filed without first being split
+        apart. A single combined mail cannot be any of those things.
+
+        Administrators are copied on every one, so the whole estate is still
+        visible to the people who administer it without any of them having to
+        be scoped into each queue by hand.
         """
         groups = assignment_groups or self.settings.assignment_groups
-        max_tickets = int(self.settings.get('thresholds.digest_max_tickets_per_agent', 25))
+        groups = [g for g in (groups or []) if str(g).strip()]
+        if not groups:
+            log.warning('No assignment groups configured - no digest to build')
+            return {'sent': 0, 'tickets': 0, 'reason': 'no_groups'}
 
-        audiences = self.audiences_for(groups)
-        if not audiences:
-            # Covers both "no queues configured" and "nobody is entitled to
-            # these queues". Distinguished in the log because the remedies are
-            # different and a zero count alone cannot tell them apart.
-            if not groups:
-                log.warning('No assignment groups configured - no digest to build')
-                return {'sent': 0, 'tickets': 0, 'reason': 'no_groups'}
-            log.warning('No lead recipients for %s - digest undeliverable', groups)
-            return {'sent': 0, 'tickets': 0, 'reason': 'no_recipients'}
+        max_tickets = int(self.settings.get('thresholds.digest_max_tickets_per_agent', 25))
 
         sent = tickets = 0
         empty = 0
         results: List[Dict[str, Any]] = []
 
-        for audience in audiences:
-            scope = audience['groups']
-            payload = self.builder.build_lead_digest(scope, max_tickets=max_tickets)
+        for group in groups:
+            audience = self.audience_for_group(group, roles=('LEAD',))
+            if not audience['to']:
+                log.error('Nobody to send the %s digest to - no lead with that '
+                          'queue in scope, and no administrator has an email '
+                          'address', group)
+                continue
+
+            payload = self.builder.build_lead_digest([group], max_tickets=max_tickets)
             payload['aged_after_days'] = self.settings.aged_after_days
 
             if not payload['tickets']:
-                log.info('Nothing aged in %s - no digest sent', scope)
+                log.info('Nothing aged in %s - no digest sent', group)
                 empty += 1
                 continue
 
             summary = payload['summary']
-            subject = (f"Aged ticket review - {summary['total']} open, "
+            subject = (f"{group} - aged ticket review: {summary['total']} open, "
                        f"{summary['team_owned']} awaiting your team")
             if summary['sla_breached']:
                 subject += f", {summary['sla_breached']} SLA breached"
 
             html = self.env.get_template('lead_digest.html').render(**payload)
             delivered = self.mailer.send(
-                to=audience['recipients'], subject=subject, html_body=html,
+                to=audience['to'], cc=audience['cc'],
+                subject=subject, html_body=html,
                 run_type=run_type, audience='lead',
                 ticket_count=len(payload['tickets']),
                 new_count=payload['movement']['new_count'],
@@ -269,15 +281,17 @@ class Dispatcher:
 
             sent += int(bool(delivered))
             tickets += len(payload['tickets'])
-            results.append({'groups': scope, 'recipients': audience['recipients'],
+            results.append({'group': group, 'to': audience['to'],
+                            'cc': audience['cc'],
+                            'orphaned': audience['orphaned'],
                             'tickets': len(payload['tickets'])})
 
         if not sent:
-            return {'sent': 0, 'tickets': 0, 'audiences': len(audiences),
-                    'reason': 'empty' if empty else 'not_sent'}
+            return {'sent': 0, 'tickets': 0, 'groups': len(groups),
+                    'reason': 'empty' if empty else 'no_recipients'}
 
         return {'sent': sent, 'tickets': tickets,
-                'audiences': len(audiences), 'digests': results}
+                'groups': len(groups), 'digests': results}
 
     # -- agent digest ------------------------------------------------------
 
@@ -305,7 +319,7 @@ class Dispatcher:
                 skipped += 1
                 continue
 
-            payload = self.builder.build_agent_digest(agent)
+            payload = self.builder.build_agent_digest(agent, assignment_groups=groups)
             payload['aged_after_days'] = self.settings.aged_after_days
             html = self.env.get_template('agent_digest.html').render(**payload)
 
@@ -341,10 +355,21 @@ class Dispatcher:
     # -- stream-tier risk alerts ------------------------------------------
 
     def send_risk_alerts(self, alerts: List[Dict[str, Any]]) -> Dict[str, Any]:
-        """Immediate notification for newly-detected risk events.
+        """Immediate notification for newly-detected risk events, per queue.
 
         Batched per run rather than one email per ticket - ten separate mails
-        in a morning is how a tool gets filtered to a folder.
+        in a morning is how a tool gets filtered to a folder - but split by
+        assignment group, because the alert body carries short descriptions
+        and caller names and those belong to one team at a time.
+
+        Wider than the digest on purpose: leads and viewers both, since an
+        alert is something to act on now and the viewers are the people
+        working the queue. Administrators are copied, as on the digest.
+
+        An alert on a ticket with no assignment group is reported rather than
+        sent. It belongs to no queue, so there is no correct audience for it,
+        and guessing one is how a ticket nobody owns ends up in front of a
+        team that does not own it either.
         """
         if not alerts:
             return {'sent': 0, 'alerts': 0}
@@ -353,51 +378,74 @@ class Dispatcher:
         for original, row in zip(alerts, decorated):
             row['alert_type'] = original.get('alert_type')
 
-        groups = sorted({r.get('assignment_group') for r in decorated
-                         if r.get('assignment_group')})
-        audiences = self.audiences_for(groups)
-        if not audiences:
-            return {'sent': 0, 'alerts': len(alerts), 'reason': 'no_recipients'}
+        by_group: Dict[str, List[Dict[str, Any]]] = {}
+        ungrouped = 0
+        for row in decorated:
+            group = str(row.get('assignment_group') or '').strip()
+            if not group:
+                ungrouped += 1
+                continue
+            by_group.setdefault(group, []).append(row)
+
+        if ungrouped:
+            log.warning('%d risk alert(s) have no assignment group and were not '
+                        'sent to anyone - they are visible on the board only',
+                        ungrouped)
+
+        if not by_group:
+            return {'sent': 0, 'alerts': len(decorated), 'ungrouped': ungrouped,
+                    'reason': 'no_groups'}
 
         sent = 0
         delivered_alerts = 0
+        results: List[Dict[str, Any]] = []
 
-        for audience in audiences:
-            # Filtered to the recipient's own queues. The alert body carries
-            # short descriptions and caller names, so sending every alert from
-            # the run to everyone would disclose one team's incidents to
-            # another the moment a second queue is configured.
-            visible = {g.lower() for g in audience['groups']}
-            mine = [r for r in decorated
-                    if str(r.get('assignment_group') or '').lower() in visible]
-            if not mine:
+        for group in sorted(by_group):
+            mine = by_group[group]
+            audience = self.audience_for_group(group, roles=('LEAD', 'VIEWER'))
+            if not audience['to']:
+                log.error('Nobody to send %d %s risk alert(s) to', len(mine), group)
                 continue
 
             html = self.env.get_template('risk_alert.html').render(
                 alerts=mine,
+                group=group,
                 generated_at=utc_now(),
                 base_url=self.builder.base_url,
                 shadow_mode=self.settings.shadow_mode,
             )
 
             breached = sum(1 for a in mine if a.get('alert_type') == 'SLA_BREACHED')
-            subject = f"{len(mine)} new risk alert{'s' if len(mine) != 1 else ''}"
+            subject = (f"{group} - {len(mine)} new risk "
+                       f"alert{'s' if len(mine) != 1 else ''}")
             if breached:
                 subject += f" ({breached} SLA breach{'es' if breached != 1 else ''})"
 
-            if self.mailer.send(to=audience['recipients'], subject=subject,
-                                html_body=html, run_type='risk_alert',
+            if self.mailer.send(to=audience['to'], cc=audience['cc'],
+                                subject=subject, html_body=html,
+                                run_type='risk_alert',
                                 audience='lead', ticket_count=len(mine)):
                 sent += 1
                 delivered_alerts += len(mine)
+                results.append({'group': group, 'to': audience['to'],
+                                'cc': audience['cc'], 'alerts': len(mine)})
 
         return {'sent': sent, 'alerts': len(decorated),
-                'delivered': delivered_alerts, 'audiences': len(audiences)}
+                'delivered': delivered_alerts, 'groups': len(by_group),
+                'ungrouped': ungrouped, 'notifications': results}
 
     # -- preview (used by the UI) -----------------------------------------
 
     def preview_lead_digest(self, assignment_groups: Optional[List[str]] = None) -> str:
+        """Render one digest without sending it.
+
+        Takes a list for the sake of the callers that already hold one, but a
+        real digest covers a single queue, so a preview over several would
+        show a message that is never actually sent. Narrowed to the first,
+        and the header names which one.
+        """
         groups = assignment_groups or self.settings.assignment_groups
+        groups = [g for g in (groups or []) if str(g).strip()][:1]
         payload = self.builder.build_lead_digest(groups)
         payload['aged_after_days'] = self.settings.aged_after_days
         return self.env.get_template('lead_digest.html').render(**payload)

@@ -1,9 +1,16 @@
-"""Scheduled work - the three cadences described in the design.
+"""Scheduled work - the cadences described in the design.
 
   stream        every 10 min   delta sync + signals + risk alerts   (no LLM)
-  recommend     hourly         LLM pass over changed tickets
+  hourly        hourly         full sync + signals + LLM pass
   digest        per cron entry lead digest, then agent digests
   maintenance   nightly        full sync, index refresh, baselines, retention
+
+The hourly job does a *full* sync, not a delta. The delta only returns rows
+ServiceNow reports as changed and in scope; a ticket that was resolved or
+reassigned to another team has stopped matching the query, so it is not in the
+delta and never will be. Only the full pass walks what is already tracked and
+notices what has departed. Running it once a day meant the board could carry a
+resolved ticket for most of a day; hourly bounds that to the hour.
 
 APScheduler with coalescing and max_instances=1 per job: if a run overruns its
 interval the next one is skipped rather than stacking up, which is the failure
@@ -59,8 +66,45 @@ class JobRunner:
             log.exception('Recommendation pass failed')
             return {'error': True}
 
+    def hourly_refresh(self, limit: Optional[int] = None) -> Dict[str, Any]:
+        """Full sync, recompute signals, then the LLM pass.
+
+        Three stages, three independent try blocks. They fail for unrelated
+        reasons - ServiceNow being slow, a malformed history row, Azure
+        OpenAI rate-limiting - and one of them failing is no reason to skip
+        the other two. Signals in particular are worth recomputing on a failed
+        sync: the inactivity clocks move with the wall clock, not with the
+        sync.
+
+        Ordered so each stage sees the previous one's output. A recommendation
+        computed before the sync lands is a recommendation about last hour's
+        state, which is exactly what this job exists to stop.
+        """
+        result: Dict[str, Any] = {'started_at': utc_now()}
+
+        try:
+            result['sync'] = self.ctx.sync.run(full=True)
+        except Exception:
+            log.exception('Hourly full sync failed')
+            result['sync'] = {'error': True}
+
+        try:
+            result['signals'] = self.orchestrator.refresh_signals()
+        except Exception:
+            log.exception('Hourly signal refresh failed')
+            result['signals'] = {'error': True}
+
+        result['recommendations'] = self.recommendation_pass(limit)
+        return result
+
     def daily_digest(self, assignment_groups=None, include_agents: bool = True) -> Dict[str, Any]:
-        """Refresh recommendations first so the digest is never stale."""
+        """Refresh recommendations first so the digest is never stale.
+
+        Still does its own full sync even though the hourly job now does one
+        too. The duplication is deliberate and cheap at once a day: this is
+        the one message people act on without opening the board, so it should
+        not inherit an hour-old view because the hourly job happened to fail.
+        """
         result: Dict[str, Any] = {}
         try:
             result['sync'] = self.ctx.sync.run(full=True)
@@ -272,9 +316,22 @@ def build_scheduler(context) -> BackgroundScheduler:
                       id='stream', name='Delta sync, signals and risk alerts',
                       next_run_time=utc_now() + datetime.timedelta(seconds=30))
 
+    # The hourly cadence. A full sync in front of the LLM pass is what keeps
+    # departed tickets - resolved, reassigned out - off the board within the
+    # hour; see the module docstring for why the delta cannot do it.
+    #
+    # Switchable, because a full pass is the heaviest regular call this
+    # service makes on ServiceNow and a large estate may want it nightly
+    # only. Turning it off restores the previous behaviour exactly: the LLM
+    # pass alone, with departures cleared once a day by the digest.
     recommend_minutes = int(settings.get('scheduler.recommendation_interval_minutes', 60))
-    scheduler.add_job(runner.recommendation_pass, IntervalTrigger(minutes=recommend_minutes),
-                      id='recommend', name='LLM recommendation pass')
+    hourly_full_sync = bool(settings.get('scheduler.hourly_full_sync', True))
+    scheduler.add_job(
+        runner.hourly_refresh if hourly_full_sync else runner.recommendation_pass,
+        IntervalTrigger(minutes=recommend_minutes),
+        id='hourly',
+        name=('Hourly full sync, signals and LLM recommendations' if hourly_full_sync
+              else 'LLM recommendation pass'))
 
     for entry in settings.get('scheduler.digests', []) or []:
         name = entry.get('name', 'digest')

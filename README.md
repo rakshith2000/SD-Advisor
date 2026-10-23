@@ -45,7 +45,8 @@ comments on a ticket.
    (no LLM — pure arithmetic, this is what makes alerting near-real-time)
                                                │
    TIER 2 · hourly + pre-digest ─────────────  ▼  ─────────────────────────────
-   retrieval (vector: similar resolved incidents + KB)
+   full sync (retires what has left the queue) → signal refresh
+        → retrieval (vector: similar resolved incidents + KB)
         → 1 structured LLM call → validated recommendation → MySQL
    (input-hash cached: an unchanged ticket costs nothing)
                                                │
@@ -53,8 +54,17 @@ comments on a ticket.
    web board · ticket drill-down · JSON API · optional SNOW push webhook
                                                │
    DELIVERY ─────────────────────────────────  ▼  ─────────────────────────────
-   daily email digest (lead + per agent) · risk alert email · web UI · Grafana
+   one email per assignment group, never one shared email:
+     daily lead digest  → that queue's leads,            cc all admins
+     risk alerts        → that queue's leads and viewers, cc all admins
+     per-agent digest   → the agent, their own tickets only
+   web UI · Grafana
 ```
+
+Only the **full** sync retires departed tickets. The delta returns what
+ServiceNow reports as changed *and in scope*; a ticket that has been resolved
+or reassigned away has stopped matching that query, so it is not in the delta
+and never will be. That is why the hourly job runs a full pass.
 
 ### The signals (deterministic, no LLM, fully explainable)
 

@@ -483,6 +483,67 @@ def cmd_doctor(args) -> int:
 
     check('admin floor', admin_floor_check)
 
+    def scope_check():
+        """Accounts that can sign in and will see nothing.
+
+        An empty assignment_groups means "every group" for an administrator
+        and "not provisioned yet" for everyone else. That used to include
+        LEAD, so a lead with no groups set saw the whole estate; now they see
+        an empty board and receive no digest.
+
+        Both failures are quiet from the inside - the board renders, the
+        digest job reports success - so they are listed here rather than left
+        to be discovered by the person staring at the empty page.
+        """
+        stranded = ctx.db.query(
+            "SELECT username, role FROM advisor_user "
+            " WHERE active = 1 AND role <> 'ADMIN' "
+            "   AND (assignment_groups IS NULL OR TRIM(assignment_groups) = '') "
+            " ORDER BY role, username")
+        if not stranded:
+            return 'every non-admin account has at least one assignment group'
+
+        names = ', '.join(f"{s['username']} ({s['role']})" for s in stranded[:12])
+        if len(stranded) > 12:
+            names += f', and {len(stranded) - 12} more'
+        raise RuntimeError(
+            f'{len(stranded)} active account(s) have no assignment group, so they '
+            f'see an empty board and receive no mail: {names}. Fix with: '
+            f'python run.py grant --username <name> --role <role> '
+            f'--groups "<group>"')
+
+    check('account scope', scope_check)
+
+    def queue_cover_check():
+        """Every configured queue needs a lead, or its digest has no audience.
+
+        The fallback addresses it to the administrators instead, so nothing is
+        lost - but an administrator receiving a queue's digest in To rather
+        than Cc is the signal that the queue is unstaffed, and that signal is
+        easier to read here than in a mailbox.
+        """
+        configured = ctx.settings.assignment_groups
+        if not configured:
+            return 'no queues configured'
+
+        leads = ctx.db.query(
+            "SELECT assignment_groups FROM advisor_user "
+            " WHERE active = 1 AND role = 'LEAD' AND email IS NOT NULL "
+            "   AND assignment_groups IS NOT NULL")
+        covered = {g.strip().lower()
+                   for row in leads
+                   for g in (row['assignment_groups'] or '').split(',') if g.strip()}
+
+        orphaned = [g for g in configured if g.strip().lower() not in covered]
+        if orphaned:
+            raise RuntimeError(
+                f'No lead is scoped to: {", ".join(orphaned)}. Those queues\' '
+                f'digests and risk alerts will be addressed to the '
+                f'administrators instead of the team that works them.')
+        return f'all {len(configured)} queue(s) have a lead'
+
+    check('queue cover', queue_cover_check)
+
     def access_requests_check():
         pending = ctx.db.query(
             "SELECT username, created_at FROM role_request WHERE status = 'PENDING' "
