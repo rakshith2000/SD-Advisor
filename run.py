@@ -651,6 +651,35 @@ def cmd_doctor(args) -> int:
                    f'{mode}' + (f'; password sign-in for {allow}' if local_enabled
                                 else '; password sign-in disabled')))
 
+    def overrides_check():
+        """Settings changed from the admin page rather than in conf.json.
+
+        Reading the file is the first thing anyone does when the service is
+        behaving unexpectedly, and an override is invisible there. Listed so
+        that `doctor` answers the question the file cannot.
+        """
+        overlay = getattr(ctx, 'setting_overlay', None)
+        if overlay is None:
+            return 'none (overlay not attached)'
+
+        active = overlay.current()
+        if not active:
+            return 'none - conf.json is in force for every setting'
+
+        from core.admin_settings import BY_KEY, RESTART
+
+        parts = []
+        for key in sorted(active):
+            spec = BY_KEY.get(key)
+            marker = ' *' if spec and spec.applies == RESTART else ''
+            parts.append(f'{key}={active[key]!r}{marker}')
+        detail = f'{len(active)} override(s): ' + '; '.join(parts)
+        if any(BY_KEY.get(k) and BY_KEY[k].applies == RESTART for k in active):
+            detail += '  [* read at start-up: in force only since the last restart]'
+        return detail
+
+    check('settings overrides', overrides_check)
+
     audit = 'configured' if ctx.audit_db else 'disabled (coaching rollup will be omitted)'
     checks.append(('INFO', 'audit database link', audit))
     checks.append(('INFO', 'shadow mode',

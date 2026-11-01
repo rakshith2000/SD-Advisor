@@ -14,12 +14,15 @@ from typing import Any, Dict, List, Optional
 from urllib.parse import quote
 
 from fastapi import BackgroundTasks, Depends, FastAPI, Form, HTTPException, Query, Request
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import (HTMLResponse, JSONResponse, RedirectResponse,
+                               Response)
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from jinja2 import pass_context
 from markupsafe import Markup, escape
 
+from core import admin_settings
+from core.admin_settings import SECTIONS, SettingError
 from core.context import get_context
 from core.logging_setup import get_logger
 from core.timeutil import (DEFAULT_DATETIME_FORMAT, DEFAULT_DISPLAY_TZ,
@@ -120,16 +123,27 @@ def create_app(config_path: Optional[str] = None) -> FastAPI:
     # can never find its way back into a subtraction or a database write.
     # -----------------------------------------------------------------
 
-    service_tz = str(ctx.settings.get('display.timezone', DEFAULT_DISPLAY_TZ))
-    datetime_format = str(ctx.settings.get('display.datetime_format',
-                                           DEFAULT_DATETIME_FORMAT))
-    allow_user_tz = bool(ctx.settings.get('display.allow_user_timezone', True))
-    tz_options = timezone_choices(ctx.settings.get('display.timezone_choices', []))
+    # Read per request, not captured here. These are editable from the admin
+    # settings page, and a value frozen at start-up would mean saving a new
+    # team label or timezone and watching the page carry on showing the old
+    # one until somebody restarted the service.
+    def service_tz() -> str:
+        return str(ctx.settings.get('display.timezone', DEFAULT_DISPLAY_TZ))
+
+    def datetime_format() -> str:
+        return str(ctx.settings.get('display.datetime_format',
+                                    DEFAULT_DATETIME_FORMAT))
+
+    def allow_user_tz() -> bool:
+        return bool(ctx.settings.get('display.allow_user_timezone', True))
+
+    def tz_options():
+        return timezone_choices(ctx.settings.get('display.timezone_choices', []))
 
     def tz_for(user: Optional[Dict[str, Any]]) -> str:
-        if allow_user_tz and user and user.get('timezone'):
+        if allow_user_tz() and user and user.get('timezone'):
             return str(user['timezone'])
-        return service_tz
+        return service_tz()
 
     @pass_context
     def localdt(context, value, fmt: Optional[str] = None,
@@ -140,8 +154,8 @@ def create_app(config_path: Optional[str] = None) -> FastAPI:
         template has to thread it through - and so a template that forgets
         still gets the configured default rather than raw UTC.
         """
-        return format_dt(value, context.get('display_tz') or service_tz,
-                         fmt or datetime_format, with_zone=with_zone)
+        return format_dt(value, context.get('display_tz') or service_tz(),
+                         fmt or datetime_format(), with_zone=with_zone)
 
     templates = Jinja2Templates(directory=str(TEMPLATE_DIR))
 
@@ -248,18 +262,24 @@ def create_app(config_path: Optional[str] = None) -> FastAPI:
     templates.env.globals.update({
         'ACTION_LABELS': ACTION_LABELS,
         'FLAG_LABELS': FLAG_LABELS,
-        # Built from settings rather than imported as a constant, so the name
-        # for the owning team follows display.team_label.
-        'PENDING_ACTION_OWNER_LABELS': owner_labels(ctx.settings),
-        'team_label': team_label(ctx.settings),
-        'shadow_mode': ctx.settings.shadow_mode,
         'customer': ctx.settings.customer_name,
-        'aged_after_days': ctx.settings.aged_after_days,
     })
 
     def render(request: Request, template: str, **context) -> HTMLResponse:
         context.setdefault('user', auth.current_user(request))
         context.setdefault('now', utc_now())
+
+        # Per render rather than baked into env.globals, because every one of
+        # these is editable from the settings page. As Jinja globals they were
+        # whatever the process started with, so saving a new team label or
+        # turning shadow mode off changed the banner on nobody's screen until
+        # the service was restarted - while the behaviour behind it had
+        # already changed. Two sources of truth disagreeing about the same
+        # switch is worse than either answer on its own.
+        context.setdefault('PENDING_ACTION_OWNER_LABELS', owner_labels(ctx.settings))
+        context.setdefault('team_label', team_label(ctx.settings))
+        context.setdefault('shadow_mode', ctx.settings.shadow_mode)
+        context.setdefault('aged_after_days', ctx.settings.aged_after_days)
 
         # The queue selector in the navigation bar. Listed per account rather
         # than globally - a lead sees their own queues and nothing else - and
@@ -280,8 +300,8 @@ def create_app(config_path: Optional[str] = None) -> FastAPI:
         context.setdefault('display_tz', zone)
         context.setdefault('display_tz_label', zone_label(zone))
         context.setdefault('display_tz_abbrev', zone_abbreviation(zone))
-        context.setdefault('timezone_options', tz_options)
-        context.setdefault('allow_user_timezone', allow_user_tz)
+        context.setdefault('timezone_options', tz_options())
+        context.setdefault('allow_user_timezone', allow_user_tz())
 
         # The badge is the reason an access request cannot be lost. Shadow mode
         # suppresses most outbound mail, and an administrator may simply not
@@ -588,7 +608,7 @@ def create_app(config_path: Optional[str] = None) -> FastAPI:
         choosing UTC: it means "follow display.timezone", so the account keeps
         tracking the service default if that is ever changed.
         """
-        if not allow_user_tz:
+        if not allow_user_tz():
             raise HTTPException(status_code=404,
                                 detail='Per-user timezones are disabled')
 
@@ -596,7 +616,7 @@ def create_app(config_path: Optional[str] = None) -> FastAPI:
             raise HTTPException(status_code=400,
                                 detail=f'{timezone[:64]!r} is not a known timezone')
 
-        zone = timezone or service_tz
+        zone = timezone or service_tz()
         return JSONResponse({'timezone': timezone or None,
                              'label': zone_label(zone),
                              'abbreviation': zone_abbreviation(zone)})
@@ -925,6 +945,258 @@ def create_app(config_path: Optional[str] = None) -> FastAPI:
 
         log.info('%s updated attention weights', user['username'])
         return RedirectResponse('/settings/weights?saved=1', status_code=303)
+
+    # -----------------------------------------------------------------
+    # admin settings
+    #
+    # Changes are stored as overrides in runtime_setting, not written back
+    # into conf.json. See core/settings_store.py for why; the short version
+    # is that the file is what the service needs in order to start, and a web
+    # process that can corrupt it can stop the service starting - with no UI
+    # left to fix it from.
+    # -----------------------------------------------------------------
+
+    @app.get('/admin/settings', response_class=HTMLResponse)
+    def admin_settings_page(request: Request, section: str = 'review',
+                            saved: str = '', error: str = '',
+                            user: Dict[str, Any] = Depends(require_admin)):
+        known = [key for key, _label, _blurb in SECTIONS]
+        if section not in known:
+            section = known[0]
+
+        title = next(label for key, label, _b in SECTIONS if key == section)
+        blurb = next(b for key, _l, b in SECTIONS if key == section)
+
+        return render(request, 'admin_settings.html',
+                      sections=SECTIONS, section=section,
+                      section_title=title, section_blurb=blurb,
+                      rows=admin_settings.rows_for(ctx.settings, section),
+                      restart_pending=admin_settings.restart_pending(ctx.settings),
+                      history=(ctx.setting_overlay.history(limit=15)
+                               if ctx.setting_overlay else []),
+                      config_path=str(ctx.settings.path),
+                      saved=saved, error=error)
+
+    @app.post('/admin/settings/{section}')
+    async def admin_settings_save(request: Request, section: str,
+                                  user: Dict[str, Any] = Depends(require_admin)):
+        form = await request.form()
+        try:
+            result = admin_settings.apply_form(
+                ctx.settings, form, section, user['username'])
+        except SettingError as exc:
+            # Nothing was written - apply_form parses every field before it
+            # stores any of them - so the administrator can correct one value
+            # without wondering which of the others went through.
+            return RedirectResponse(
+                f'/admin/settings?section={quote(section)}&error={quote(str(exc))}',
+                status_code=303)
+
+        touched = result['changed'] + result['cleared']
+        if not touched:
+            return RedirectResponse(f'/admin/settings?section={quote(section)}',
+                                    status_code=303)
+
+        log.warning('%s changed settings: %s', user['username'], ', '.join(touched))
+        message = f"{len(touched)} setting{'s' if len(touched) != 1 else ''} saved"
+        if result['restart']:
+            message += ' - restart required for: ' + ', '.join(result['restart'])
+
+        return RedirectResponse(
+            f'/admin/settings?section={quote(section)}&saved={quote(message)}',
+            status_code=303)
+
+    @app.post('/admin/settings/{section}/reset')
+    async def admin_settings_reset(request: Request, section: str,
+                                   key: str = Form(...),
+                                   user: Dict[str, Any] = Depends(require_admin)):
+        """Drop one override so the conf.json value applies again.
+
+        Checked against the registry first. Without that, a crafted post
+        could delete a row for any key - harmless today, because only
+        allow-listed keys are ever read back, but it would make the audit
+        trail describe changes that never had an effect.
+        """
+        if key not in admin_settings.BY_KEY:
+            raise HTTPException(status_code=404, detail='Not a managed setting')
+        if ctx.setting_overlay is None:
+            raise HTTPException(status_code=503, detail='Settings storage unavailable')
+
+        if ctx.setting_overlay.clear(key, user['username']):
+            message = f'{admin_settings.BY_KEY[key].label} reset to the file value'
+        else:
+            message = 'That setting was already following the file'
+
+        return RedirectResponse(
+            f'/admin/settings?section={quote(section)}&saved={quote(message)}',
+            status_code=303)
+
+    @app.get('/admin/settings/export')
+    def admin_settings_export(user: Dict[str, Any] = Depends(require_admin)):
+        """conf.json as the service is actually running it.
+
+        For the deployment that keeps the file under source control: download
+        this, commit it, and the next rebuild starts where the running service
+        already is. Secrets are not in conf.json to begin with - they are in
+        Vault - so this carries none.
+        """
+        body = admin_settings.export_json(ctx.settings)
+        log.info('%s exported the effective configuration', user['username'])
+        return Response(
+            content=body, media_type='application/json',
+            headers={'Content-Disposition':
+                     'attachment; filename="conf.effective.json"'})
+
+    # -----------------------------------------------------------------
+    # user administration
+    # -----------------------------------------------------------------
+
+    @app.get('/admin/users', response_class=HTMLResponse)
+    def admin_users(request: Request, saved: str = '', error: str = '',
+                    show_inactive: bool = False,
+                    user: Dict[str, Any] = Depends(require_admin)):
+        accounts = ctx.db.retrieve('advisor_user', order_by='active DESC, role, username')
+        if not show_inactive:
+            accounts = [a for a in accounts if a.get('active')]
+
+        known = ctx.known_assignment_groups()
+        for account in accounts:
+            account['group_list'] = [
+                g.strip() for g in (account.get('assignment_groups') or '').split(',')
+                if g.strip()]
+            # The state that produces an empty board and no email while
+            # everything reports success.
+            account['stranded'] = (bool(account.get('active'))
+                                   and account['role'] != 'ADMIN'
+                                   and not account['group_list'])
+
+        return render(request, 'admin_users.html',
+                      accounts=accounts, all_groups=known,
+                      show_inactive=show_inactive,
+                      admin_count=sum(1 for a in accounts
+                                      if a.get('active') and a['role'] == 'ADMIN'),
+                      local_login=local_enabled,
+                      saved=saved, error=error)
+
+    @app.post('/admin/users/{username}/role')
+    async def admin_user_role(request: Request, username: str,
+                              user: Dict[str, Any] = Depends(require_admin)):
+        form = await request.form()
+        role = str(form.get('role', '')).strip().upper()
+        groups = [g for g in form.getlist('groups') if g.strip()]
+
+        known = {g.lower(): g for g in ctx.known_assignment_groups()}
+        unknown = [g for g in groups if g.lower() not in known]
+        if unknown:
+            # A near-miss matches no tickets and shows as an empty board
+            # rather than an error, so it is refused at the point of entry.
+            return _users_redirect(error=f'Not a known assignment group: '
+                                         f'{", ".join(unknown)}')
+
+        try:
+            users.set_role(username, role, [known[g.lower()] for g in groups] or None,
+                           source='MANUAL')
+        except ValueError as exc:
+            return _users_redirect(error=str(exc))
+
+        log.warning('%s set %s to %s (groups=%s)', user['username'], username,
+                    role, ', '.join(groups) or 'all')
+        return _users_redirect(saved=f'{username} updated')
+
+    @app.post('/admin/users/{username}/active')
+    async def admin_user_active(request: Request, username: str,
+                                user: Dict[str, Any] = Depends(require_admin)):
+        form = await request.form()
+        active = 1 if str(form.get('active', '')).strip() == '1' else 0
+
+        account = users.live(username)
+        if not account:
+            raise HTTPException(status_code=404, detail='No such account')
+
+        if not active:
+            # Three refusals, all for lockouts that nothing in the UI can
+            # undo once they have happened.
+            if account['username'] == user['username']:
+                return _users_redirect(
+                    error='You cannot deactivate your own account.')
+            if account['role'] == 'ADMIN':
+                remaining = [a for a in users.active_admins()
+                             if a['username'] != username]
+                if not remaining:
+                    return _users_redirect(
+                        error=f'{username} is the only active administrator. '
+                              f'Promote another account first.')
+
+        ctx.db.update('advisor_user', {'active': active},
+                      conditions=[{'col': 'username', 'op': 'eq', 'val': username}])
+
+        log.warning('%s %s %s', user['username'],
+                    'reactivated' if active else 'deactivated', username)
+        return _users_redirect(
+            saved=f"{username} {'reactivated' if active else 'deactivated'}"
+                  + ('' if active else ' - they will stop receiving mail'))
+
+    @app.post('/admin/users/create')
+    async def admin_user_create(request: Request,
+                                user: Dict[str, Any] = Depends(require_admin)):
+        """Create a local password account.
+
+        Exists for the break-glass administrator and for anyone not in the
+        identity provider. Single sign-on accounts create themselves on first
+        login and should not be made here.
+        """
+        from web.auth import PasswordError, validate_password
+
+        form = await request.form()
+        username = str(form.get('username', '')).strip()
+        if not username:
+            return _users_redirect(error='A username is required.')
+        if users.live(username):
+            return _users_redirect(error=f'{username} already exists.')
+
+        password = str(form.get('password', ''))
+        try:
+            validate_password(password)
+        except PasswordError as exc:
+            return _users_redirect(error=str(exc))
+
+        groups = [g for g in form.getlist('groups') if g.strip()]
+        users.create(username=username, password=password,
+                     full_name=str(form.get('full_name', '')).strip(),
+                     email=str(form.get('email', '')).strip(),
+                     role=str(form.get('role', 'VIEWER')).strip().upper(),
+                     assignment_groups=', '.join(groups))
+
+        log.warning('%s created local account %s', user['username'], username)
+        return _users_redirect(saved=f'{username} created')
+
+    @app.post('/admin/users/{username}/password')
+    async def admin_user_password(request: Request, username: str,
+                                  user: Dict[str, Any] = Depends(require_admin)):
+        from web.auth import PasswordError, hash_password, validate_password
+
+        account = users.live(username)
+        if not account:
+            raise HTTPException(status_code=404, detail='No such account')
+        if account.get('auth_source') == 'OIDC':
+            return _users_redirect(
+                error=f'{username} signs in through single sign-on. Their '
+                      f'password is held by the identity provider, not here.')
+
+        password = str((await request.form()).get('password', ''))
+        try:
+            validate_password(password)
+        except PasswordError as exc:
+            return _users_redirect(error=str(exc))
+
+        ctx.db.update('advisor_user', {'password_hash': hash_password(password)},
+                      conditions=[{'col': 'username', 'op': 'eq', 'val': username}])
+        log.warning('%s reset the password for %s', user['username'], username)
+        return _users_redirect(saved=f'Password updated for {username}')
+
+    def _users_redirect(saved: str = '', error: str = '') -> RedirectResponse:
+        query = f'?saved={quote(saved)}' if saved else f'?error={quote(error)}'
+        return RedirectResponse(f'/admin/users{query}', status_code=303)
 
     # -----------------------------------------------------------------
     # digest preview & manual run

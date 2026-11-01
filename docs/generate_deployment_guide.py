@@ -628,21 +628,29 @@ FLUSH PRIVILEGES;""", caption='Run as a MySQL administrator')
 g.h2('6.2 Apply the schema')
 g.code("""cd /genai/etc/scripts/aged_ticket_advisor
 mysql -u <admin> -p < db/schema.sql""")
-g.p('This creates the database if absent, eleven tables, the default attention weights and '
-    'the v_current_board view. It is written to be safely re-runnable.')
+g.p('This creates the database if absent, every table, the default attention weights and '
+    'the v_current_board view. It is written to be safely re-runnable, so a new installation '
+    'needs nothing from the migrations below.')
 
 g.h3('6.2.1 Upgrading an existing database')
-g.p('Skip this on a new installation. If the database was created before the terminology was '
-    'formalised, apply the migration before restarting the service — the schema change and '
-    'the code change must land together.')
+g.p('Skip this on a new installation. Apply the migrations in order before restarting the '
+    'service — each schema change and the code that depends on it must land together.')
 g.code("""sudo systemctl stop aged-ticket-advisor
 
 mysql -u sd_advisor -p sd_advisor_db < db/migrations/001_formalise_naming.sql
 mysql -u sd_advisor -p sd_advisor_db < db/migrations/002_utc_and_minutes.sql
+mysql -u sd_advisor -p sd_advisor_db < db/migrations/003_sso_and_access_requests.sql
+mysql -u sd_advisor -p sd_advisor_db < db/migrations/004_scope_provenance.sql
+mysql -u sd_advisor -p sd_advisor_db < db/migrations/005_user_timezone.sql
+mysql -u sd_advisor -p sd_advisor_db < db/migrations/006_generalise_team_wording.sql
+mysql -u sd_advisor -p sd_advisor_db < db/migrations/007_admin_settings.sql
 mysql -u sd_advisor -p sd_advisor_db < db/schema.sql     # recreates the view
 
 sudo systemctl start aged-ticket-advisor""",
        caption='Stop the service first — the running process holds the former column names')
+g.p('Every one is idempotent. 007 adds runtime_setting and setting_audit, which back the '
+    'Admin settings page (§16.4b); until it is applied the page reports that storage is '
+    'unavailable and the service runs on conf.json alone rather than failing.')
 g.table(['Change', 'Former name', 'Current name'], [
     ['ticket_signal column', 'ball_in_court', 'pending_action_owner'],
     ['ticket_signal column', 'p90_overrun', 'duration_overrun'],
@@ -1337,6 +1345,17 @@ g.callout('warn', 'A blank assignment_groups field no longer means "all groups" 
 # ========================================================== SECTION 11 =====
 g.h1('11. Step 9 — conf.json, field by field')
 
+g.callout('info', 'Most of this can be changed later from the browser.',
+          'An ADMIN gets an "Admin settings" entry in the account menu, covering review '
+          'thresholds, mail, the access-request workflow, presentation, the schedule and the '
+          'model thresholds — plus a users page for roles, assignment groups, activation and '
+          'local passwords. Those changes are stored in the runtime_setting table as overrides '
+          'on this file; the file itself is never rewritten by the web process. It holds the '
+          'Vault address, the database host and the OIDC registration — everything that has to '
+          'be correct before the service can report that anything is wrong — and a process that '
+          'can corrupt it can stop the service starting, with no UI left to fix it from. '
+          'Get this file right once; expect to tune the rest from the page.')
+
 g.h2('11.1 Create the file')
 g.code("""cd /genai/etc/scripts/aged_ticket_advisor
 cp config/conf.sample.json config/conf.json
@@ -1920,6 +1939,41 @@ g.code("""curl -s http://localhost:8444/healthz | python3 -m json.tool
 #     "llm": "ok",
 #     "shadow_mode": true
 # }""")
+
+g.h2('16.4b Administering the service from the browser')
+g.p('Signed in as ADMIN, the account menu carries Admin settings. Two pages:')
+g.table(['Page', 'What it covers'], [
+    ['/admin/settings',
+     'Review thresholds, assignment groups, mail, access requests, presentation, '
+     'schedule, model thresholds. Plus the attention weights, already at '
+     '/settings/weights'],
+    ['/admin/users',
+     'Role and assignment groups per account, activate and deactivate, create a local '
+     'account, reset a local password'],
+], widths=[4.4, 12.0], code_cols=(0,))
+
+g.h3('Where the changes go')
+g.p('Into the runtime_setting table, as overrides on conf.json, with every change written to '
+    'setting_audit — who, when, from what, to what. conf.json is never rewritten. Only keys '
+    'listed in core/admin_settings.SPECS are editable; the Vault address, database credentials '
+    'and OIDC registration are not on that list and cannot be put on it by a crafted request, '
+    'because the route looks each key up in the registry before it does anything.')
+g.p('Anything overridden is marked on the page, shown beside its conf.json value, and has a '
+    'Reset to the file value button. `python run.py doctor` lists every active override under '
+    '"settings overrides" — worth knowing, because reading conf.json over SSH is the first '
+    'thing anyone does when the service is behaving unexpectedly, and an override is invisible '
+    'there.')
+g.p('If you keep conf.json under source control, "Download conf.json" on the settings sidebar '
+    'gives you the file as the service is actually running it. Commit that, and the next '
+    'rebuild starts where the running service already is.')
+
+g.callout('warn', 'Some settings are read once, while the service is starting.',
+          'Assignment groups, the scheduler intervals and the evidence-similarity floor are '
+          'among them. Those are tagged "Restart" on the page, and a banner lists any that '
+          'have been changed and are not yet in force. Everything else — including shadow '
+          'mode, every mail setting and every review threshold — applies on save. The '
+          'distinction is real: shadow mode in particular is read at send time precisely so '
+          'that turning it off does not wait for a restart.')
 
 g.h2('16.5 Scheduled jobs installed')
 g.table(['Job ID', 'Trigger', 'What it does'], [

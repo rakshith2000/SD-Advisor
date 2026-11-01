@@ -366,6 +366,47 @@ CREATE TABLE IF NOT EXISTS role_request (
 
 
 -- ---------------------------------------------------------------------------
+-- Settings an administrator changed from the UI.
+--
+-- Overrides on config/conf.json, not a replacement for it. The file holds the
+-- Vault address, the database host and the OIDC registration - everything
+-- that has to be correct before the service can report that anything is
+-- wrong - and a web process that rewrites it can leave behind a file the
+-- service will not start from, with no UI left to fix it. So the file stays
+-- the bootstrap and these rows carry the operational keys.
+--
+-- Only keys in core/admin_settings.SPECS are read back. A row for anything
+-- else is inert, which is how removing a key from that registry disables its
+-- override without needing a migration.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS runtime_setting (
+    setting_key   VARCHAR(120)  NOT NULL,
+    value_json    TEXT          NOT NULL,
+    updated_by    VARCHAR(100)  NOT NULL,
+    updated_at    DATETIME      NOT NULL,
+    PRIMARY KEY (setting_key)
+) ENGINE=InnoDB;
+
+
+-- Every settings change, kept. Turning runtime.shadow_mode off starts live
+-- mail to every lead and viewer in the estate; "who did that, and when" has
+-- to be answerable afterwards, and the current value cannot answer it.
+-- Deliberately not pruned: a few rows a month, and the question it exists for
+-- is always about something longer ago than anyone expected.
+CREATE TABLE IF NOT EXISTS setting_audit (
+    id            BIGINT        NOT NULL AUTO_INCREMENT,
+    setting_key   VARCHAR(120)  NOT NULL,
+    old_value     TEXT          NULL,
+    new_value     TEXT          NULL,
+    changed_by    VARCHAR(100)  NOT NULL,
+    changed_at    DATETIME      NOT NULL,
+    PRIMARY KEY (id),
+    KEY ix_setting_audit_key (setting_key, changed_at),
+    KEY ix_setting_audit_when (changed_at)
+) ENGINE=InnoDB;
+
+
+-- ---------------------------------------------------------------------------
 -- Convenience view: latest signal per ticket, joined to latest recommendation.
 -- Grafana and the UI board both read this.
 -- ---------------------------------------------------------------------------

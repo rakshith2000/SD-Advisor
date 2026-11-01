@@ -543,3 +543,161 @@ table.data td.num, table.data th.num { text-align: right;
 @media (max-width: 860px) {
   .tz-picker select { max-width: 110px; }
 }
+
+/* ---------------------------------------------------------------------------
+   Admin settings
+
+   A sidebar of sections beside one form. Deliberately not tabs: a tab strip
+   implies the panels are alternatives, and these are one configuration read
+   top to bottom when somebody is trying to work out what the service is
+   currently doing.
+   --------------------------------------------------------------------------- */
+
+.settings-layout {
+  display: grid;
+  grid-template-columns: 210px minmax(0, 1fr);
+  gap: 18px;
+  align-items: start;
+}
+
+.settings-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  position: sticky;
+  top: 16px;
+}
+
+.settings-nav a {
+  font: 500 13px/1.4 var(--font);
+  color: var(--text-secondary);
+  text-decoration: none;
+  padding: 7px 10px;
+  border-radius: 5px;
+  border-left: 2px solid transparent;
+}
+
+.settings-nav a:hover { background: var(--surface-1); color: var(--text-primary); }
+
+.settings-nav a.active {
+  background: var(--surface-1);
+  color: var(--text-primary);
+  border-left-color: var(--accent);
+  font-weight: 600;
+}
+
+.settings-nav hr {
+  border: 0;
+  border-top: 1px solid var(--grid);
+  margin: 8px 4px;
+}
+
+/* One setting: label and provenance on the left, control and explanation on
+   the right. The dotted key is shown because it is what conf.json, the
+   deployment guide and every log line call this thing. */
+.setting {
+  display: grid;
+  grid-template-columns: minmax(0, 260px) minmax(0, 1fr);
+  gap: 16px;
+  padding: 14px 0;
+  border-top: 1px solid var(--grid);
+}
+
+.setting:first-of-type { border-top: 0; padding-top: 2px; }
+
+.setting.is-overridden { border-left: 2px solid var(--accent); padding-left: 12px; }
+
+.setting-label label {
+  display: block;
+  font: 600 13px/1.4 var(--font);
+  color: var(--text-primary);
+}
+
+.setting-key {
+  display: block;
+  font: 400 11px/1.5 var(--mono);
+  color: var(--text-muted);
+  margin: 2px 0 4px;
+  word-break: break-all;
+}
+
+.setting-control input[type="text"],
+.setting-control input[type="number"],
+.setting-control select,
+.setting-control textarea {
+  width: 100%;
+  max-width: 420px;
+  font: 400 13px/1.5 var(--font);
+  color: var(--text-primary);
+  background: var(--surface-0);
+  border: 1px solid var(--grid);
+  border-radius: 5px;
+  padding: 6px 8px;
+}
+
+.setting-control textarea { font-family: var(--mono); resize: vertical; }
+
+.setting-control .subtle { margin-top: 5px; max-width: 560px; }
+
+/* Reserved for settings whose wrong value is not merely wrong. Turning
+   shadow mode off starts live mail to the whole estate. */
+.setting-warning {
+  margin-top: 6px;
+  max-width: 560px;
+  font: 500 12px/1.6 var(--font);
+  color: var(--status-critical);
+}
+
+/* Shown only where the database and conf.json disagree - the one place
+   somebody reading the file over SSH would draw the wrong conclusion. */
+.setting-file {
+  margin-top: 6px;
+  font: 400 12px/1.6 var(--font);
+  color: var(--text-secondary);
+}
+
+.setting-actions {
+  padding-top: 16px;
+  border-top: 1px solid var(--grid);
+  margin-top: 8px;
+}
+
+.linkish {
+  background: none;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  color: var(--accent);
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.chip.alt { border-color: var(--accent); color: var(--text-primary); }
+
+/* Several controls on one table row, as on the users page. */
+.inline-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: flex-start;
+}
+
+.inline-form select,
+.inline-form input {
+  font: 400 12px/1.4 var(--font);
+  color: var(--text-primary);
+  background: var(--surface-0);
+  border: 1px solid var(--grid);
+  border-radius: 4px;
+  padding: 4px 6px;
+}
+
+.inline-form .subtle { flex-basis: 100%; }
+
+tr.is-muted td { opacity: 0.55; }
+
+@media (max-width: 860px) {
+  .settings-layout { grid-template-columns: minmax(0, 1fr); }
+  .settings-nav { position: static; flex-direction: row; flex-wrap: wrap; }
+  .setting { grid-template-columns: minmax(0, 1fr); gap: 6px; }
+}

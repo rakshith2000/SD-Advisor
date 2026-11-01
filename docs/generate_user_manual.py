@@ -876,7 +876,18 @@ g.p('Email follows the same boundary. One message is sent per assignment group �
 g.p('If your board is empty and the page says no assignment groups are in scope, your account '
     'has not been given any yet. Request access from your profile page.')
 
-g.h2('8.5 Asking for more access')
+g.h2('8.5 For administrators: the settings page')
+g.p('Signed in as an administrator, the account menu at the top right carries Admin settings. '
+    'It covers the review thresholds, the assignment groups, email, the access-request '
+    'workflow, presentation, the schedule and the attention weights — and a separate page for '
+    'roles, assignment groups, activation and local passwords.')
+g.p('Two things to know. Anything you have changed from the shipped configuration is marked '
+    'Overridden, shows the original value beside it, and has a Reset button; and a few '
+    'settings are read only when the service starts. Those are tagged Restart, and a banner '
+    'at the top lists any you have changed that are not in force yet. Everything else — '
+    'including shadow mode and every email setting — takes effect when you press Save.')
+
+g.h2('8.6 Asking for more access')
 g.p('Your profile page carries two separate requests, and which ones you see depends on what '
     'you already have:')
 g.table(['Ask', 'Who sees it', 'What it changes'], [

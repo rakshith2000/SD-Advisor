@@ -64,23 +64,58 @@ def normalise_thresholds(raw: Dict[str, Any]) -> Dict[str, Any]:
 class Settings:
     """Thin dotted-path accessor over the config dict.
 
-    Kept deliberately simple: config is read once at startup and treated as
-    immutable. Anything that needs to change at runtime (weights, thresholds
-    per customer) belongs in the database, not here.
+    Two layers, in order:
+
+      1. A database overlay, if one has been attached - the operational keys
+         an administrator can change from the settings page. See
+         core.settings_store for why those live in a table rather than being
+         written back into this file.
+      2. config/conf.json, which is the bootstrap: the Vault address, the
+         database host, the OIDC registration. Everything that has to be
+         correct before the service can report that anything is wrong.
+
+    The overlay is attached after the database exists, which is necessarily
+    after the settings that describe the database have been read from the
+    file. Those keys are not overridable, and that ordering is the reason.
     """
 
     def __init__(self, raw: Dict[str, Any], path: Path):
         self._raw = raw
         self.path = path
         self.root = PROJECT_ROOT
+        self._overlay = None
 
-    def get(self, dotted: str, default: Any = None) -> Any:
+    def attach_overlay(self, overlay) -> None:
+        self._overlay = overlay
+
+    @property
+    def overlay(self):
+        return self._overlay
+
+    def file_value(self, dotted: str, default: Any = None) -> Any:
+        """The conf.json value, ignoring any override.
+
+        What the settings page shows beside an override, so the two cannot
+        silently disagree without somebody being shown both.
+        """
         node: Any = self._raw
         for part in dotted.split('.'):
             if not isinstance(node, dict) or part not in node:
                 return default
             node = node[part]
         return node
+
+    def get(self, dotted: str, default: Any = None) -> Any:
+        overlay = self._overlay
+        if overlay is not None:
+            try:
+                if overlay.has(dotted):
+                    return overlay.get(dotted)
+            except Exception:
+                # An overlay that cannot be read must not take the whole
+                # service down with it; the file is a correct answer.
+                log.debug('Overlay lookup failed for %s', dotted, exc_info=True)
+        return self.file_value(dotted, default)
 
     def require(self, dotted: str) -> Any:
         value = self.get(dotted, None)
@@ -119,7 +154,32 @@ class Settings:
         return int(self.get('thresholds.aged_after_days', 5))
 
     def as_dict(self) -> Dict[str, Any]:
+        """The file contents, verbatim. Overrides are not folded in."""
         return json.loads(json.dumps(self._raw))
+
+    def effective_dict(self) -> Dict[str, Any]:
+        """The file with every active override applied.
+
+        What the service is actually running on, and what the settings page
+        offers for download - so an operator who keeps conf.json under source
+        control can commit the current state rather than reconstructing it.
+        """
+        merged = self.as_dict()
+        overlay = self._overlay
+        if overlay is None:
+            return merged
+
+        for dotted, value in (overlay.current() or {}).items():
+            node = merged
+            parts = dotted.split('.')
+            for part in parts[:-1]:
+                nxt = node.get(part)
+                if not isinstance(nxt, dict):
+                    nxt = {}
+                    node[part] = nxt
+                node = nxt
+            node[parts[-1]] = value
+        return merged
 
 
 def load_settings(path: Optional[str] = None, force: bool = False) -> Settings:

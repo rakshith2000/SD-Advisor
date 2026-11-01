@@ -1,0 +1,182 @@
+{% extends "base.html" %}
+{% block title %}Users and access &middot; Aged Ticket Advisor{% endblock %}
+
+{% block content %}
+
+<div class="page-head">
+  <h1>Users and access</h1>
+  <p>
+    Role and assignment groups decide what each person sees on the board and
+    what arrives in their inbox. The two are the same boundary.
+  </p>
+</div>
+
+{% if error %}<div class="banner"><div><strong>{{ error }}</strong></div></div>{% endif %}
+{% if saved %}<div class="banner info"><div><strong>{{ saved }}</strong></div></div>{% endif %}
+
+{% if admin_count == 1 %}
+<div class="banner">
+  <div>
+    <strong>One administrator.</strong>
+    Nothing in this page can promote an account once the last one is gone, so
+    a mistake would need the command line to undo. A second administrator
+    makes that recoverable from a browser.
+  </div>
+</div>
+{% endif %}
+
+{% set stranded = accounts | selectattr('stranded') | list %}
+{% if stranded %}
+<div class="banner">
+  <div>
+    <strong>{{ stranded|length }} account{{ 's' if stranded|length != 1 }} with no assignment group.</strong>
+    {% for a in stranded[:8] %}{{ a.username }}{{ ', ' if not loop.last }}{% endfor %}{% if stranded|length > 8 %}, and {{ stranded|length - 8 }} more{% endif %}.
+    They can sign in, see an empty board and receive no email &mdash; all of
+    which look like success from the outside. Give them a queue below.
+  </div>
+</div>
+{% endif %}
+
+<div class="card">
+  <div class="card-head">
+    <h2>{{ accounts|length }} account{{ 's' if accounts|length != 1 }}</h2>
+    <span class="sub">
+      <a href="/admin/users?show_inactive={{ 'false' if show_inactive else 'true' }}">
+        {{ 'Hide' if show_inactive else 'Show' }} deactivated
+      </a>
+    </span>
+  </div>
+  <div class="card-body flush">
+    <table class="data">
+      <thead>
+        <tr>
+          <th>Account</th><th>Role and queues</th><th>Sign-in</th><th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for account in accounts %}
+        <tr class="{{ 'is-muted' if not account.active }}">
+          <td>
+            <strong>{{ account.full_name or account.username }}</strong>
+            <div class="subtle">{{ account.username }}</div>
+            <div class="subtle">{{ account.email or 'No email - receives nothing' }}</div>
+            {% if not account.active %}<span class="chip">Deactivated</span>{% endif %}
+            {% if account.stranded %}<span class="chip alert">No queues</span>{% endif %}
+          </td>
+
+          <td>
+            <form method="post" action="/admin/users/{{ account.username }}/role"
+                  class="inline-form">
+              <select name="role" aria-label="Role for {{ account.username }}">
+                {% for role in ('VIEWER', 'LEAD', 'ADMIN') %}
+                <option value="{{ role }}" {{ 'selected' if account.role == role }}>
+                  {{ role|title }}</option>
+                {% endfor %}
+              </select>
+              {#
+                An administrator sees every queue regardless, so offering the
+                list for one would imply a restriction that is not applied.
+              #}
+              <select name="groups" multiple size="4"
+                      aria-label="Assignment groups for {{ account.username }}">
+                {% for g in all_groups %}
+                <option value="{{ g }}" {{ 'selected' if g in account.group_list }}>{{ g }}</option>
+                {% endfor %}
+              </select>
+              <button class="btn small" type="submit">Save</button>
+              <div class="subtle">
+                {% if account.role == 'ADMIN' %}
+                  Administrators see every queue; this list is ignored for them.
+                {% elif account.group_list %}
+                  {{ account.group_list|join(', ') }}
+                {% else %}
+                  Nothing selected &mdash; sees nothing
+                {% endif %}
+              </div>
+            </form>
+          </td>
+
+          <td>
+            {{ 'Single sign-on' if account.auth_source == 'OIDC' else 'Local password' }}
+            <div class="subtle">
+              {% if account.role_source %}Set by {{ account.role_source|lower }}{% endif %}
+            </div>
+            {% if account.auth_source != 'OIDC' and local_login %}
+            <form method="post" action="/admin/users/{{ account.username }}/password"
+                  class="inline-form">
+              <input type="password" name="password" placeholder="New password"
+                     autocomplete="new-password">
+              <button class="btn small" type="submit">Reset</button>
+            </form>
+            {% endif %}
+          </td>
+
+          <td>
+            <form method="post" action="/admin/users/{{ account.username }}/active">
+              <input type="hidden" name="active" value="{{ '0' if account.active else '1' }}">
+              <button class="btn small" type="submit">
+                {{ 'Deactivate' if account.active else 'Reactivate' }}
+              </button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{% if local_login %}
+<div class="card">
+  <div class="card-head">
+    <h2>Create a local account</h2>
+    <span class="sub">Password sign-in, not single sign-on</span>
+  </div>
+  <div class="card-body">
+    <p class="subtle" style="margin-top:0;">
+      Single sign-on accounts create themselves on first login and should not
+      be made here &mdash; a second row for the same person orphans their
+      feedback history. This is for the break-glass administrator and for
+      anyone the identity provider does not know.
+    </p>
+    <form method="post" action="/admin/users/create" class="filters">
+      <div class="field">
+        <label for="new_username">Username</label>
+        <input id="new_username" name="username" required>
+      </div>
+      <div class="field">
+        <label for="new_full_name">Full name</label>
+        <input id="new_full_name" name="full_name">
+      </div>
+      <div class="field">
+        <label for="new_email">Email</label>
+        <input id="new_email" name="email" type="email">
+      </div>
+      <div class="field">
+        <label for="new_role">Role</label>
+        <select id="new_role" name="role">
+          {% for role in ('VIEWER', 'LEAD', 'ADMIN') %}
+          <option value="{{ role }}">{{ role|title }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="field">
+        <label for="new_groups">Assignment groups</label>
+        <select id="new_groups" name="groups" multiple size="4">
+          {% for g in all_groups %}<option value="{{ g }}">{{ g }}</option>{% endfor %}
+        </select>
+      </div>
+      <div class="field">
+        <label for="new_password">Password</label>
+        <input id="new_password" name="password" type="password"
+               autocomplete="new-password" required>
+      </div>
+      <button class="btn primary" type="submit">Create</button>
+    </form>
+  </div>
+</div>
+{% endif %}
+
+<p><a href="/admin/settings">&larr; Settings</a></p>
+
+{% endblock %}

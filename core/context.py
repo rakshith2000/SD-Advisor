@@ -12,9 +12,11 @@ start and serve the board if Azure OpenAI is unreachable.
 import threading
 from typing import Any, Dict, List, Optional
 
+from core.admin_settings import editable_keys
 from core.config import Settings, load_settings, normalise_thresholds
 from core.db import Database, build_audit_database, build_database
 from core.logging_setup import get_logger, setup_logging
+from core.settings_store import SettingsOverlay
 from core.llm.client import LlmClient
 from core.snow.base import ServiceNowClient
 from core.snow.directory import DirectoryReader
@@ -45,6 +47,18 @@ class AppContext:
         self.vault = VaultClient(settings)
         self.db: Database = build_database(settings, self.vault)
         self.audit_db: Optional[Database] = build_audit_database(settings, self.vault)
+
+        # Administrator-changed settings, layered over conf.json. Attached
+        # here and not earlier for a reason that is also the reason the
+        # database keys are not overridable: this needs a database, and the
+        # settings that describe the database have already been read from the
+        # file to get this far.
+        #
+        # Everything constructed below therefore sees overrides, which is why
+        # this line sits above the ServiceNow and sync wiring rather than at
+        # the end of the method.
+        self.setting_overlay = SettingsOverlay(self.db, allowed=editable_keys())
+        settings.attach_overlay(self.setting_overlay)
 
         self.snow = ServiceNowClient(settings, self.vault)
         self.incidents = IncidentReader(self.snow, settings.assignment_groups)

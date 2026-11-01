@@ -112,6 +112,14 @@
           <a href="/profile"
              class="account-item"
              role="menuitem">Profile</a>
+          {% if user.role == 'ADMIN' %}
+          <a href="/admin/settings"
+             class="account-item"
+             role="menuitem">
+            <span>Admin settings</span>
+            <span class="account-item-note">Configuration and users</span>
+          </a>
+          {% endif %}
           <button type="button"
                   class="account-item"
                   role="menuitem"

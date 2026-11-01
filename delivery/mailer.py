@@ -22,35 +22,22 @@ log = get_logger('delivery.mailer')
 
 
 class Mailer:
+    """SMTP delivery.
+
+    Every setting below is read at send time rather than captured here. One
+    Mailer is built per process and lives for its lifetime, so a value cached
+    in this constructor would be the value the service started with - and
+    runtime.shadow_mode is the most consequential switch in the product.
+    An administrator turning it off and watching nothing happen until the
+    next restart is not an acceptable way for that control to behave.
+
+    The Vault credentials are the exception: they are fetched once, because
+    they are not administrator-editable and the lookup is a network call.
+    """
+
     def __init__(self, settings, vault, db=None):
         self.settings = settings
         self.db = db
-        self.enabled = bool(settings.get('mail.enabled', True))
-        # The display name on every outbound message. Configurable because the
-        # service is not tied to one queue: a deployment covering several
-        # groups should not have its mail appear to come from one of them.
-        self.from_name = (str(settings.get('mail.from_name', '')).strip()
-                          or 'Aged Ticket Advisor')
-        self.shadow = bool(settings.get('runtime.shadow_mode', True))
-
-        # Shadow mode exists to stop bulk mail reaching the wider team
-        # while output is still being validated. An access request notification
-        # is a different thing: one message to the administrators, about the
-        # service itself, triggered by a person who is waiting for an answer.
-        # Suppressing it leaves the request sitting unseen - and the trial is
-        # exactly when that workflow is being exercised.
-        self.shadow_exempt = {
-            str(t).strip() for t in (settings.get('runtime.shadow_mode_exempt', []) or [])
-            if str(t).strip()
-        }
-
-        self.host = settings.get('mail.host')
-        self.port = int(settings.get('mail.port', 587))
-        self.use_starttls = bool(settings.get('mail.use_starttls', True))
-        self.from_address = settings.get('mail.from_address')
-        self.reply_to = settings.get('mail.reply_to')
-        self.subject_prefix = settings.get('mail.subject_prefix', '[SD Advisor]')
-        self.always_bcc = list(settings.get('mail.always_bcc', []) or [])
 
         self.username: Optional[str] = None
         self.password: Optional[str] = None
@@ -61,6 +48,66 @@ class Mailer:
             self.password = secret.get('password')
         except Exception:
             log.info('No SMTP credentials in Vault - assuming an open relay')
+
+    # -- live configuration ------------------------------------------------
+
+    @property
+    def enabled(self) -> bool:
+        return bool(self.settings.get('mail.enabled', True))
+
+    @property
+    def shadow(self) -> bool:
+        return bool(self.settings.get('runtime.shadow_mode', True))
+
+    @property
+    def shadow_exempt(self) -> set:
+        """Run types that are sent even in shadow mode.
+
+        Shadow mode exists to stop bulk mail reaching the wider team while
+        output is still being validated. An access request notification is a
+        different thing: one message to the administrators, about the service
+        itself, triggered by a person who is waiting for an answer.
+        Suppressing it leaves the request sitting unseen - and the trial is
+        exactly when that workflow is being exercised.
+        """
+        configured = self.settings.get('runtime.shadow_mode_exempt', []) or []
+        return {str(t).strip() for t in configured if str(t).strip()}
+
+    @property
+    def from_name(self) -> str:
+        # Configurable because the service is not tied to one queue: a
+        # deployment covering several groups should not have its mail appear
+        # to come from one of them.
+        return (str(self.settings.get('mail.from_name', '')).strip()
+                or 'Aged Ticket Advisor')
+
+    @property
+    def host(self):
+        return self.settings.get('mail.host')
+
+    @property
+    def port(self) -> int:
+        return int(self.settings.get('mail.port', 587))
+
+    @property
+    def use_starttls(self) -> bool:
+        return bool(self.settings.get('mail.use_starttls', True))
+
+    @property
+    def from_address(self):
+        return self.settings.get('mail.from_address')
+
+    @property
+    def reply_to(self):
+        return self.settings.get('mail.reply_to')
+
+    @property
+    def subject_prefix(self):
+        return self.settings.get('mail.subject_prefix', '[SD Advisor]')
+
+    @property
+    def always_bcc(self) -> List[str]:
+        return list(self.settings.get('mail.always_bcc', []) or [])
 
     # -- public ------------------------------------------------------------
 
