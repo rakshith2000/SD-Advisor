@@ -49,6 +49,18 @@
         <td style="color:{{ MUTED }};vertical-align:top;">Queues granted</td>
         <td>{{ request.granted_groups or 'None' }}</td>
       </tr>
+      {#
+        Shown whenever it differs from what this request added - which is the
+        case for every "more queues" approval. Without it the reader sees one
+        queue name and reasonably concludes it replaced the rest.
+      #}
+      {% if request.effective_groups
+            and request.effective_groups != request.granted_groups %}
+      <tr>
+        <td style="color:{{ MUTED }};vertical-align:top;">You can now see</td>
+        <td><strong>{{ request.effective_groups }}</strong></td>
+      </tr>
+      {% endif %}
     </table>
     {% if request.requested_groups and request.granted_groups
           and request.requested_groups != request.granted_groups %}

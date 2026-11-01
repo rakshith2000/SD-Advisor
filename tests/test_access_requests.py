@@ -104,13 +104,17 @@ class FakeDb:
         if 'AND status = %s' in sql and 'username = %s' in sql and 'to_role' not in sql:
             return next((dict(r) for r in reversed(self.rows)
                          if r['username'] == params[0] and r['status'] == params[1]), None)
+        raise AssertionError(f'unexpected query: {sql}')
+
+    def query(self, sql, params=None):
+        params = params or ()
         if 'to_role = %s' in sql:                      # the cooldown probe
             username, to_role, status, cutoff = params
-            matches = [r for r in self.rows
+            matches = [dict(r) for r in self.rows
                        if r['username'] == username and r['to_role'] == to_role
                        and r['status'] == status and r.get('decided_at')
                        and r['decided_at'] >= cutoff]
-            return dict(max(matches, key=lambda r: r['decided_at'])) if matches else None
+            return sorted(matches, key=lambda r: r['decided_at'], reverse=True)
         raise AssertionError(f'unexpected query: {sql}')
 
     def retrieve(self, table, columns=None, conditions=None, order_by=None, limit=None):
@@ -248,9 +252,14 @@ class TestOpenRequest:
         with pytest.raises(AccessRequestError, match='cannot be requested'):
             service.open_request(VIEWER, 'ADMIN', REASON, ['Service Desk'], GROUPS)
 
-    def test_requesting_a_role_you_already_hold_is_refused(self, service):
+    def test_requesting_a_queue_you_already_hold_is_refused(self, service, users):
+        """Asking for the role you have is how you ask for more queues - but
+        asking for a queue you already have is just a no-op somebody would
+        have to decide."""
+        users.accounts['a.viewer'].update(
+            {'role': 'LEAD', 'assignment_groups': 'Service Desk'})
         lead = {**VIEWER, 'role': 'LEAD'}
-        with pytest.raises(AccessRequestError, match='already has the LEAD role'):
+        with pytest.raises(AccessRequestError, match='already has that assignment group'):
             service.open_request(lead, 'LEAD', REASON, ['Service Desk'], GROUPS)
 
     def test_an_admin_cannot_request_a_narrower_role(self, service):
@@ -563,3 +572,230 @@ class TestSessionReconciliation:
         # Navigation must not show a viewer's menu to someone the routes are
         # already treating as a lead.
         assert current_user(request)['role'] == 'LEAD'
+
+
+# ---------------------------------------------------------------------------
+# asking for more queues at the role you already hold
+# ---------------------------------------------------------------------------
+
+def make_lead(users, groups='Service Desk'):
+    users.accounts['a.viewer'].update({'role': 'LEAD', 'assignment_groups': groups})
+    return {**VIEWER, 'role': 'LEAD'}
+
+
+class TestAdditionalGroups:
+    """A lead already holds the role, so there is nothing to elevate.
+
+    Before this, open_request refused any request where the current role
+    equalled the target - which meant a lead whose groups were wrong, missing
+    or merely out of date had no way to say so from inside the product. With
+    an empty scope now meaning "sees nothing" rather than "sees everything",
+    a freshly granted LEAD could be left staring at an empty board with no
+    form to fill in.
+    """
+
+    def test_a_lead_may_ask_for_a_queue_they_do_not_have(self, service, users):
+        lead = make_lead(users)
+        row = service.open_request(lead, 'LEAD', REASON, ['Network Operations'], GROUPS)
+
+        assert row['status'] == 'PENDING'
+        assert row['from_role'] == 'LEAD' and row['to_role'] == 'LEAD'
+        assert row['requested_groups'] == 'Network Operations'
+
+    def test_it_is_marked_as_an_addition_not_an_elevation(self, service, users):
+        """What the administrator's page and email branch on."""
+        row = service.open_request(make_lead(users), 'LEAD', REASON,
+                                   ['Network Operations'], GROUPS)
+        assert row['is_additive'] is True
+
+    def test_an_elevation_is_not_marked_as_an_addition(self, service):
+        assert open_one(service)['is_additive'] is False
+
+    def test_queues_already_held_are_stripped_from_the_request(self, service, users):
+        """The administrator should read "wants Network Operations added", not
+        a list in which the one new queue is buried among those they have."""
+        lead = make_lead(users, 'Service Desk')
+        row = service.open_request(lead, 'LEAD', REASON,
+                                   ['Service Desk', 'Network Operations'], GROUPS)
+        assert row['requested_groups'] == 'Network Operations'
+
+    def test_asking_only_for_what_you_have_is_refused(self, service, users):
+        lead = make_lead(users, 'Service Desk, Network Operations')
+        with pytest.raises(AccessRequestError, match='all of those assignment groups'):
+            service.open_request(lead, 'LEAD', REASON,
+                                 ['Service Desk', 'Network Operations'], GROUPS)
+
+    def test_a_lead_with_no_queues_at_all_may_ask(self, service, users):
+        """The state a newly granted LEAD starts in, and the one where the
+        board is empty and nothing explains why."""
+        lead = make_lead(users, '')
+        row = service.open_request(lead, 'LEAD', REASON, ['Service Desk'], GROUPS)
+        assert row['requested_groups'] == 'Service Desk'
+
+    def test_a_viewer_may_ask_for_more_queues_without_elevating(self, service, users):
+        """Same need, lower role: seeing another queue is not the same ask as
+        being able to act on it. allowed_targets does not gate this, because
+        it is not an elevation."""
+        users.accounts['a.viewer']['assignment_groups'] = 'Service Desk'
+        row = service.open_request(VIEWER, 'VIEWER', REASON,
+                                   ['Network Operations'], GROUPS)
+        assert row['to_role'] == 'VIEWER' and row['is_additive'] is True
+
+    def test_an_administrator_is_told_they_already_see_everything(self, service):
+        with pytest.raises(AccessRequestError, match='already see every assignment group'):
+            service.open_request({**ADMIN, 'role': 'ADMIN'}, 'ADMIN', REASON,
+                                 ['Service Desk'], GROUPS)
+
+    def test_the_justification_minimum_still_applies(self, service, users):
+        with pytest.raises(AccessRequestError, match='at least 20 characters'):
+            service.open_request(make_lead(users), 'LEAD', 'more pls',
+                                 ['Network Operations'], GROUPS)
+
+    def test_an_unknown_queue_is_still_refused(self, service, users):
+        with pytest.raises(AccessRequestError, match='Not a known assignment group'):
+            service.open_request(make_lead(users), 'LEAD', REASON,
+                                 ['Netwrk Operations'], GROUPS)
+
+    def test_still_only_one_open_request_at_a_time(self, service, users):
+        lead = make_lead(users)
+        service.open_request(lead, 'LEAD', REASON, ['Network Operations'], GROUPS)
+        with pytest.raises(AccessRequestError, match='already have a request'):
+            service.open_request(lead, 'LEAD', REASON, ['Desktop Support'], GROUPS)
+
+
+class TestApprovalIsAdditive:
+    """The failure this prevents is a removal wearing the word Approve.
+
+    set_role REPLACES assignment_groups. The decision form offers the queues
+    being added - so approving "please add Network Operations" with only that
+    selected would have left the lead holding Network Operations and nothing
+    else, with the audit row reading APPROVED and no warning anywhere.
+    """
+
+    def test_approving_an_addition_keeps_what_they_had(self, service, users):
+        lead = make_lead(users, 'Service Desk')
+        row = service.open_request(lead, 'LEAD', REASON, ['Network Operations'], GROUPS)
+
+        service.approve(row['id'], ADMIN, ['Network Operations'], '', GROUPS)
+
+        assert users.accounts['a.viewer']['assignment_groups'] == (
+            'Service Desk, Network Operations')
+
+    def test_the_resulting_scope_is_reported_to_the_caller(self, service, users):
+        """The decision email prints it. "Granted: Network Operations" alone
+        reads as though it replaced the rest."""
+        lead = make_lead(users, 'Service Desk')
+        row = service.open_request(lead, 'LEAD', REASON, ['Network Operations'], GROUPS)
+
+        result = service.approve(row['id'], ADMIN, ['Network Operations'], '', GROUPS)
+        assert result['scope'] == ['Service Desk', 'Network Operations']
+
+    def test_the_request_records_only_what_this_decision_granted(self, service, users):
+        """Two different facts. granted_groups is the decision; the scope is
+        the consequence."""
+        lead = make_lead(users, 'Service Desk')
+        row = service.open_request(lead, 'LEAD', REASON, ['Network Operations'], GROUPS)
+
+        decided = service.approve(row['id'], ADMIN, ['Network Operations'],
+                                  '', GROUPS)['request']
+        assert decided['granted_groups'] == 'Network Operations'
+
+    def test_an_administrator_granting_less_still_adds_rather_than_replaces(
+            self, service, users):
+        lead = make_lead(users, 'Service Desk')
+        row = service.open_request(lead, 'LEAD', REASON,
+                                   ['Network Operations', 'Desktop Support'], GROUPS)
+
+        service.approve(row['id'], ADMIN, ['Desktop Support'], '', GROUPS)
+
+        assert users.accounts['a.viewer']['assignment_groups'] == (
+            'Service Desk, Desktop Support')
+
+    def test_a_duplicate_grant_does_not_appear_twice(self, service, users):
+        lead = make_lead(users, 'Service Desk')
+        row = service.open_request(lead, 'LEAD', REASON, ['Network Operations'], GROUPS)
+
+        service.approve(row['id'], ADMIN, ['Service Desk', 'Network Operations'],
+                        '', GROUPS)
+
+        assert users.accounts['a.viewer']['assignment_groups'] == (
+            'Service Desk, Network Operations')
+
+    def test_an_elevation_still_replaces_rather_than_merges(self, service, users):
+        """A viewer being made a lead has their scope defined from scratch;
+        there is nothing to preserve, and carrying over a viewer's queues
+        would grant lead rights over queues nobody chose."""
+        users.accounts['a.viewer']['assignment_groups'] = 'Desktop Support'
+        row = open_one(service)
+
+        service.approve(row['id'], ADMIN, ['Service Desk'], '', GROUPS)
+
+        assert users.accounts['a.viewer']['assignment_groups'] == 'Service Desk'
+
+    def test_a_role_granted_by_hand_between_ask_and_decision_is_respected(
+            self, service, users):
+        """Read from the live account, not from from_role. Otherwise an
+        administrator who granted LEAD manually while the request sat pending
+        would have the approval strip the scope they just set."""
+        row = open_one(service)
+        users.accounts['a.viewer'].update(
+            {'role': 'LEAD', 'assignment_groups': 'Desktop Support'})
+
+        service.approve(row['id'], ADMIN, ['Service Desk'], '', GROUPS)
+
+        assert users.accounts['a.viewer']['assignment_groups'] == (
+            'Desktop Support, Service Desk')
+
+
+class TestCooldownIsPerQueue:
+    """A decline is about a queue, not about the role.
+
+    Keyed on the role alone, one refusal for Network Operations in March would
+    block a lead from asking for Desktop Support in April - for a month, in a
+    message naming neither queue.
+    """
+
+    def decline(self, service, users, groups):
+        lead = make_lead(users, 'Service Desk')
+        row = service.open_request(lead, 'LEAD', REASON, list(groups), GROUPS)
+        service.reject(row['id'], ADMIN, 'Not yet')
+        return lead
+
+    def test_re_asking_for_the_declined_queue_is_refused(self, service, users):
+        lead = self.decline(service, users, ['Network Operations'])
+        with pytest.raises(AccessRequestError, match='Network Operations'):
+            service.open_request(lead, 'LEAD', REASON, ['Network Operations'], GROUPS)
+
+    def test_asking_for_a_different_queue_is_allowed(self, service, users):
+        lead = self.decline(service, users, ['Network Operations'])
+        row = service.open_request(lead, 'LEAD', REASON, ['Desktop Support'], GROUPS)
+        assert row['requested_groups'] == 'Desktop Support'
+
+    def test_a_partial_overlap_is_refused_and_names_the_queue(self, service, users):
+        lead = self.decline(service, users, ['Network Operations'])
+        with pytest.raises(AccessRequestError, match='for Network Operations was declined'):
+            service.open_request(lead, 'LEAD', REASON,
+                                 ['Network Operations', 'Desktop Support'], GROUPS)
+
+
+class TestWhatTheProfileOffers:
+    def test_only_queues_not_already_held_are_listed(self, service, users):
+        make_lead(users, 'Service Desk')
+        assert service.missing_groups('a.viewer', GROUPS) == [
+            'Desktop Support', 'Network Operations']
+
+    def test_an_account_with_everything_is_offered_nothing(self, service, users):
+        make_lead(users, ', '.join(GROUPS))
+        assert service.missing_groups('a.viewer', GROUPS) == []
+
+    def test_an_account_with_nothing_is_offered_everything(self, service, users):
+        make_lead(users, '')
+        assert service.missing_groups('a.viewer', GROUPS) == GROUPS
+
+    def test_matching_ignores_case_and_padding(self, service, users):
+        make_lead(users, '  service desk ')
+        assert 'Service Desk' not in service.missing_groups('a.viewer', GROUPS)
+
+    def test_the_scope_reads_back_as_a_list(self, service, users):
+        make_lead(users, 'Service Desk, Network Operations')
+        assert service.scope_of('a.viewer') == ['Service Desk', 'Network Operations']

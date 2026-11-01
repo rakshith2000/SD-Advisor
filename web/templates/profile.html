@@ -72,11 +72,26 @@
   </div>
   <div class="card-body">
     <p>
+      {% if open_request.is_additive %}
+      You have asked to add <strong>{{ open_request.requested_groups }}</strong>
+      to the queues you can see.
+      {% else %}
       You have asked for <strong>{{ open_request.to_role|title }}</strong> on
       {{ open_request.requested_groups }}.
+      {% endif %}
       Administrators have been notified. If nobody decides by
       {{ open_request.expires_at | localdt('%d %b %Y') }} the request closes
       automatically and you can ask again.
+    </p>
+    {#
+      One request at a time - the table has a unique index on it. Worth
+      saying, because the alternative reading of a missing form is that
+      asking for more is not possible at all, which is what sent people to
+      their administrator before this existed.
+    #}
+    <p class="subtle">
+      You can only have one request open at a time. Withdraw this one if you
+      need to ask for something else first.
     </p>
     <form method="post" action="/profile/request-role/{{ open_request.id }}/cancel">
       <button class="btn small" type="submit">Withdraw this request</button>
@@ -84,10 +99,13 @@
   </div>
 </div>
 
-{% elif requestable and user.role in ('VIEWER',) %}
+{% else %}
+
+{# ---- elevation: changes what you can do ---- #}
+{% if requestable %}
 <div class="card">
   <div class="card-head">
-    <h2>Request additional access</h2>
+    <h2>Request a different role</h2>
     <span class="sub">Goes to every administrator for a decision</span>
   </div>
   <div class="card-body">
@@ -109,7 +127,7 @@
       <div class="field">
         <label for="groups">Assignment groups you need</label>
         <select id="groups" name="groups" multiple size="6">
-          {% for g in all_groups %}
+          {% for g in missing_groups or all_groups %}
           <option value="{{ g }}">{{ g }}</option>
           {% endfor %}
         </select>
@@ -131,6 +149,80 @@
     </form>
   </div>
 </div>
+{% endif %}
+
+{#
+  ---- more queues: changes what you can see ----
+
+  Separate from the role form above, and available at any role below Admin.
+  A lead already holds the role, so there is nothing to elevate - but their
+  groups may be wrong, missing, or simply out of date, and before this there
+  was no way to say so from inside the product.
+#}
+{% if can_request_groups %}
+<div class="card">
+  <div class="card-head">
+    <h2>Request additional assignment groups</h2>
+    <span class="sub">Goes to every administrator for a decision</span>
+  </div>
+  <div class="card-body">
+    {% if not scope %}
+    <div class="banner" style="margin-top:0;">
+      <div>
+        <strong>Your account has no assignment groups.</strong>
+        That is why the board is empty. Ask for the queues you work below.
+      </div>
+    </div>
+    {% endif %}
+
+    <form method="post" action="/profile/request-role">
+      {# Same role, more scope. The service reads this as an addition, not
+         an elevation, and approving it never removes what you already have. #}
+      <input type="hidden" name="to_role" value="{{ current_role }}">
+
+      <div class="field">
+        <label for="extra_groups">Assignment groups to add</label>
+        <select id="extra_groups" name="groups" multiple size="6">
+          {% for g in missing_groups %}
+          <option value="{{ g }}">{{ g }}</option>
+          {% endfor %}
+        </select>
+        <div class="subtle">
+          Hold Ctrl (or Cmd) to select more than one. Queues you already have
+          are not listed.
+          {% if scope %}
+          These are added to {{ scope|join(', ') }} &mdash; approving does not
+          take any of those away.
+          {% endif %}
+        </div>
+      </div>
+
+      <div class="field">
+        <label for="group_justification">Why you need them</label>
+        <textarea id="group_justification" name="justification" rows="4"
+                  minlength="{{ min_justification }}" required
+                  placeholder="For example: I have taken over the morning triage for this queue as well."></textarea>
+        <div class="subtle">
+          At least {{ min_justification }} characters. This is what the
+          administrator reads when deciding.
+        </div>
+      </div>
+
+      <button class="btn primary" type="submit">Send request</button>
+    </form>
+  </div>
+</div>
+{% elif current_role != 'ADMIN' and scope %}
+<div class="card">
+  <div class="card-body">
+    <p class="subtle">
+      You already have every assignment group this service covers, so there is
+      nothing further to request.
+    </p>
+  </div>
+</div>
+{% endif %}
+
 {% endif %}
 
 {# ------------------------------------------------------------------ #}

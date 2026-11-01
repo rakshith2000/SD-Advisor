@@ -54,10 +54,18 @@
       {% endif %}
       <tr>
         <td style="color:{{ MUTED }};vertical-align:top;">Change</td>
-        <td>{{ request.from_role|title }} &rarr; <strong>{{ request.to_role|title }}</strong></td>
+        <td>
+          {% if request.is_additive %}
+          <strong>{{ request.to_role|title }}</strong> &mdash; already held,
+          no change of role
+          {% else %}
+          {{ request.from_role|title }} &rarr; <strong>{{ request.to_role|title }}</strong>
+          {% endif %}
+        </td>
       </tr>
       <tr>
-        <td style="color:{{ MUTED }};vertical-align:top;">Queues requested</td>
+        <td style="color:{{ MUTED }};vertical-align:top;">
+          {{ 'Queues to add' if request.is_additive else 'Queues requested' }}</td>
         <td>{{ request.requested_groups or 'None specified' }}</td>
       </tr>
       <tr>

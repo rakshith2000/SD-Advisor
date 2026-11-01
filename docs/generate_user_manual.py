@@ -876,6 +876,27 @@ g.p('Email follows the same boundary. One message is sent per assignment group �
 g.p('If your board is empty and the page says no assignment groups are in scope, your account '
     'has not been given any yet. Request access from your profile page.')
 
+g.h2('8.5 Asking for more access')
+g.p('Your profile page carries two separate requests, and which ones you see depends on what '
+    'you already have:')
+g.table(['Ask', 'Who sees it', 'What it changes'], [
+    ['A different role', 'Viewers',
+     'What you can DO — record verdicts, snooze, request re-analysis'],
+    ['Additional assignment groups', 'Anyone below Admin who does not already have every group',
+     'What you can SEE — adds queues to your board, digests and alerts'],
+], widths=[4.0, 5.4, 7.0])
+g.p('The second one exists for the case that used to have no answer: you are already a lead, '
+    'so there is no role to ask for, but your queues are missing, wrong, or simply out of date. '
+    'Pick the queues, say why, and every administrator is notified.')
+g.callout('info', 'Approving additional groups never removes the ones you have.',
+          'They are added to your existing scope. The decision email lists both what this '
+          'request granted and everything you can see as a result, so there is no ambiguity '
+          'about whether one replaced the other. Reducing a scope is deliberately not something '
+          'this form can do — ask an administrator.')
+g.p('You can have one request open at a time. Withdraw the one you have if you need to ask for '
+    'something else first. If a request is declined you can ask again for a different queue '
+    'straight away; the waiting period applies only to the queues that were actually refused.')
+
 
 # =========================================================== SECTION 9 =====
 g.h1('9. Glossary')

@@ -6,8 +6,13 @@
 <div class="page-head">
   <h1>Access request</h1>
   <p>
+    {% if additive %}
+    {{ req.full_name or req.username }} is already
+    {{ req.to_role|title }} and has asked for additional assignment groups.
+    {% else %}
     {{ req.full_name or req.username }} has asked to go from
     {{ req.from_role|title }} to {{ req.to_role|title }}.
+    {% endif %}
   </p>
 </div>
 
@@ -33,7 +38,22 @@
           <div class="subtle">{{ req.username }}</div></td></tr>
         <tr><td>Email</td><td>{{ req.email or 'Not set' }}</td></tr>
         <tr><td>Change</td>
-            <td>{{ req.from_role|title }} &rarr; <strong>{{ req.to_role|title }}</strong></td></tr>
+            <td>
+              {% if additive %}
+                <strong>{{ req.to_role|title }}</strong> &mdash; already held,
+                no change of role
+              {% else %}
+                {{ req.from_role|title }} &rarr; <strong>{{ req.to_role|title }}</strong>
+              {% endif %}
+            </td></tr>
+        <tr><td>Queues held now</td>
+            <td>
+              {% if held_groups %}
+                {% for g in held_groups %}<span class="chip">{{ g }}</span>{% endfor %}
+              {% else %}
+                <span class="subtle">None &mdash; their board is empty</span>
+              {% endif %}
+            </td></tr>
         <tr><td>Queues requested</td><td>{{ req.requested_groups or 'None specified' }}</td></tr>
         <tr><td>Raised</td><td class="tnum">{{ req.created_at | localdt(with_zone=True) }}</td></tr>
         <tr><td>Expires</td><td class="tnum">{{ req.expires_at | localdt('%d %b %Y') }}</td></tr>
@@ -88,9 +108,17 @@
 
     <div class="banner" style="margin-top:0;">
       <div>
+        {% if additive %}
+        <strong>{{ req.email or req.username }}</strong> already receives mail
+        for {{ held_groups|join(', ') if held_groups else 'no queues' }}.
+        Approving adds the queues you grant below to that &mdash; their
+        digests and risk alerts will start covering those teams' incident
+        descriptions and caller names too.
+        {% else %}
         Approving adds <strong>{{ req.email or req.username }}</strong> to the
         daily lead digest and to risk alerts for the queues you grant below.
         Those emails contain incident descriptions and caller names.
+        {% endif %}
       </div>
     </div>
 
@@ -99,13 +127,24 @@
         <label for="groups">Queues to grant</label>
         <select id="groups" name="groups" multiple size="6">
           {% for g in all_groups %}
+          {# Queues they already hold are listed but not offered. This form
+             grants; it cannot take away, and an unselected option that looks
+             like it would remove one is a trap. #}
+          {% if additive and g in held_groups %}
+          <option value="{{ g }}" disabled>{{ g }} &mdash; already held</option>
+          {% else %}
           <option value="{{ g }}"
                   {{ 'selected' if g in req.requested_group_list }}>{{ g }}</option>
+          {% endif %}
           {% endfor %}
         </select>
         <div class="subtle">
           Pre-selected to what they asked for. Narrow it if that is too much
           &mdash; they are told what was actually granted.
+          {% if additive %}
+          Approving never removes a queue they already have; use
+          <code>run.py grant</code> if you need to reduce their scope.
+          {% endif %}
         </div>
       </div>
 

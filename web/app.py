@@ -519,13 +519,33 @@ def create_app(config_path: Optional[str] = None) -> FastAPI:
     def profile(request: Request, error: str = '', sent: int = 0,
                 user: Dict[str, Any] = Depends(require_user)):
         account = users.live(user['username']) or {}
+        role = (account.get('role') or user.get('role') or '').upper()
+
+        # Two things can be asked for, and which ones apply depends on the
+        # role. An elevation is gated by allowed_targets; asking for more
+        # queues at the role already held is not, because it widens what a
+        # person can see without widening what they can do.
+        #
+        # Administrators are offered neither: they hold the top role and see
+        # every queue already.
+        order = {'VIEWER': 0, 'LEAD': 1, 'ADMIN': 2}
+        requestable = [r for r in access.allowed_targets
+                       if order.get(r.upper(), 0) > order.get(role, 0)
+                       ] if access.enabled else []
+        missing = (access.missing_groups(user['username'],
+                                         ctx.known_assignment_groups())
+                   if access.enabled and role != 'ADMIN' else [])
+
         return render(request, 'profile.html',
                       account=account,
                       scope=scope_of(user),
                       all_groups=ctx.known_assignment_groups(),
+                      missing_groups=missing,
+                      can_request_groups=bool(missing) and role != 'ADMIN',
+                      current_role=role,
                       open_request=access.open_request_for(user['username']),
                       history=access.history_for(user['username']),
-                      requestable=access.allowed_targets if access.enabled else [],
+                      requestable=requestable,
                       min_justification=access.min_justification,
                       error=error, sent=bool(sent))
 
@@ -610,9 +630,21 @@ def create_app(config_path: Optional[str] = None) -> FastAPI:
         if not record:
             raise HTTPException(status_code=404, detail='No such access request')
 
+        # What they hold now, read live rather than from the request - an
+        # administrator may have granted something by hand since it was
+        # raised. Shown because approving an addition unions with this, and
+        # an administrator who cannot see it cannot judge what they are
+        # about to hand over.
+        held = access.scope_of(record['username'])
+        account = users.live(record['username']) or {}
+        additive = ((account.get('role') or '').upper()
+                    == (record.get('to_role') or '').upper())
+
         return render(request, 'access_request_detail.html',
                       req=record,
                       all_groups=ctx.known_assignment_groups(),
+                      held_groups=held,
+                      additive=additive,
                       prior=[r for r in access.history_for(record['username'], limit=20)
                              if r['id'] != record['id']],
                       is_own=record['username'] == user['username'],
@@ -659,7 +691,15 @@ def create_app(config_path: Optional[str] = None) -> FastAPI:
                 status_code=303)
 
         try:
-            dispatcher.send_role_decision(result['request'])
+            # The full resulting scope travels with the decision, not just the
+            # queues this request added. "Granted: Network Operations" alone
+            # reads to the recipient as though it is now the only one they
+            # have - which is the thing the union in approve() exists to make
+            # untrue.
+            decided = dict(result['request'])
+            if result.get('scope'):
+                decided['effective_groups'] = ', '.join(result['scope'])
+            dispatcher.send_role_decision(decided)
         except Exception:
             log.exception('Could not email the decision for request %s', request_id)
 
