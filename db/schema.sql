@@ -366,6 +366,51 @@ CREATE TABLE IF NOT EXISTS role_request (
 
 
 -- ---------------------------------------------------------------------------
+-- Which knowledge articles were put in front of the model, and which it used.
+--
+-- Citations were already stored, inside the `evidence` JSON on
+-- `recommendation`, mixed in with similar incidents and signal names. That is
+-- enough to display and not enough to measure.
+--
+-- Both halves are recorded, because the interesting failures live in the gap
+-- between them: offered-but-never-cited across a category means retrieval is
+-- pulling the wrong articles; cited-and-rated-irrelevant means the model is
+-- reaching for anything with matching words. Neither shows up if only
+-- citations are kept.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS recommendation_kb (
+    id                 BIGINT        NOT NULL AUTO_INCREMENT,
+    recommendation_id  BIGINT        NOT NULL,
+    incident_number    VARCHAR(50)   NOT NULL,
+    kb_number          VARCHAR(50)   NOT NULL,
+
+    source             VARCHAR(20)   NOT NULL DEFAULT 'vector',
+    similarity         DECIMAL(4,3)  NULL,
+
+    offered            TINYINT(1)    NOT NULL DEFAULT 1,
+    cited              TINYINT(1)    NOT NULL DEFAULT 0,
+    cite_note          TEXT          NULL,
+
+    -- A different question from whether the lead agreed with the action. An
+    -- article can be the right one behind a judgement call they would have
+    -- made differently, and a plausible wrong article can sit behind an
+    -- action that happened to be correct.
+    verdict            ENUM('UNRATED','RELEVANT','IRRELEVANT','OUTDATED')
+                                     NOT NULL DEFAULT 'UNRATED',
+    rated_by           VARCHAR(100)  NULL,
+    rated_at           DATETIME      NULL,
+
+    created_at         DATETIME      NOT NULL,
+
+    PRIMARY KEY (id),
+    UNIQUE KEY uq_rec_kb (recommendation_id, kb_number),
+    KEY ix_rec_kb_incident (incident_number, created_at),
+    KEY ix_rec_kb_article (kb_number, cited),
+    KEY ix_rec_kb_verdict (verdict, rated_at)
+) ENGINE=InnoDB;
+
+
+-- ---------------------------------------------------------------------------
 -- Settings an administrator changed from the UI.
 --
 -- Overrides on config/conf.json, not a replacement for it. The file holds the

@@ -23,11 +23,19 @@ from typing import Any, Dict, List
 # wrongly - and prompts the model differently - once Desktop Support or
 # Network is in scope.
 #
+# v2.2 made the knowledge articles load-bearing. Until this version they were
+# supplied under an "EVIDENCE" heading with no rule attached, and only the
+# first 700 characters of each body - which, for a symptom-first article, is
+# the preamble and not the procedure. The model could see that a relevant
+# article existed and usually could not see what it said to do. The rules
+# below state how an article maps onto an action, and the excerpt window now
+# seeks the procedure rather than truncating from the top.
+#
 # PROMPT_VERSION is part of the input hash, so a bump re-analyses the backlog
 # once. That is the point: accuracy figures either compare like with like or
-# they are not figures. Leaving it at v2.0 would file two different prompts
+# they are not figures. Leaving it at v2.1 would file two different prompts
 # under one label and quietly corrupt the one number this service is judged on.
-PROMPT_VERSION = 'v2.1'
+PROMPT_VERSION = 'v2.2'
 
 SYSTEM_PROMPT = """You are a senior IT support shift lead reviewing aged incident tickets.
 
@@ -43,6 +51,15 @@ Rules:
 - Set confidence below 0.5 where the recorded history is insufficient to form a judgement. An honest low-confidence assessment is more useful than a confident assumption.
 - Recommend REASSIGN only where the evidence identifies a specific named group present in the AVAILABLE GROUPS list.
 - Recommend CLOSE_STALE only where documented follow-ups have been made and the caller has not responded.
+
+Using the knowledge articles:
+- Read the body of each supplied knowledge article, not only its title. The articles are retrieved by similarity to this incident, so a high similarity score means the wording matches - it does not mean the article applies. Judge applicability from the content.
+- Where an article prescribes a procedure that this incident's history shows has NOT been attempted, recommend the action that procedure implies and put its concrete steps into draft_work_note, in the article's own order. Do not paraphrase a numbered procedure into a single sentence.
+- Where an article names the team, queue or role that owns this class of fault, use that as suggested_target_group with REASSIGN - but only if that name appears in AVAILABLE GROUPS. If the article names a team that is not in that list, say so in the rationale and do not recommend REASSIGN.
+- Where an article defines an escalation trigger or threshold that this incident's SIGNALS have crossed, recommend ESCALATE and cite the article and the signal together.
+- Where the history shows the article's procedure has already been followed without success, say so, and do not recommend repeating it.
+- An article is only evidence if you used it. Add it to the evidence array with type "kb" when it changed your answer, and state in the note which part of it did. Do not cite an article merely because it was supplied.
+- Where no supplied article applies, say so plainly in the rationale and cite none. "No applicable knowledge" is a useful finding - it is how a knowledge gap gets noticed.
 - Placeholders such as [[PHONE_1]] or [[EMAIL_2]] represent redacted values. Reproduce them verbatim in any drafted text; never infer the underlying value.
 - draft_work_note is addressed to the incident record: factual, past tense, no salutation.
 - draft_caller_message is addressed to the caller: courteous, plain language, no internal terminology or technical hostnames.
@@ -101,6 +118,73 @@ def _fmt_similar(similar: List[Dict[str, Any]]) -> str:
     return '\n'.join(lines)
 
 
+# How much of a KB article body reaches the model.
+#
+# This was 700 characters, which is roughly 110 words. Knowledge articles are
+# written symptom-first: scope, affected versions and preamble come before the
+# procedure, so 700 characters reliably delivered the part that describes the
+# problem and cut off before the part that says what to do. The model was
+# being shown that an article existed and was relevant, and almost never the
+# steps inside it.
+#
+# 1800 is what the opening plus a short procedure costs. The index already
+# stores 2000, so nothing new has to be fetched.
+KB_BODY_BUDGET = 1800
+
+# Headings that mark where the procedure starts. When an article is longer
+# than the budget, the steps are worth more to a shift lead than the preamble,
+# so the window is moved to start here rather than truncating from the top.
+_PROCEDURE_MARKERS = (
+    'resolution', 'resolution steps', 'steps', 'procedure', 'workaround',
+    'fix', 'how to', 'instructions', 'remediation', 'solution', 'action',
+    'troubleshooting',
+)
+
+
+def kb_excerpt(body: str, budget: int = KB_BODY_BUDGET) -> str:
+    """The most useful `budget` characters of a knowledge article.
+
+    Short enough to fit: returned whole. Too long: the window starts at the
+    first procedure heading, because an article that does not fit is exactly
+    the article whose steps were being discarded.
+
+    The opening is kept as a one-line prefix either way - the steps alone can
+    be ambiguous about which fault they apply to, and a model that cannot see
+    the scope is a model that will apply a Windows fix to a Mac.
+    """
+    text = (body or '').strip()
+    if len(text) <= budget:
+        return text
+
+    lowered = text.lower()
+    best = -1
+    for marker in _PROCEDURE_MARKERS:
+        # Only treat it as a heading if it is near the start of a line or
+        # followed by a colon; "no action" in prose is not a procedure.
+        for candidate in (f'\n{marker}', f'{marker}:'):
+            found = lowered.find(candidate)
+            if found != -1 and (best == -1 or found < best):
+                best = found
+
+    # The only case worth rejecting is a heading with nothing after it - a
+    # trailing "Resolution:" and no body. Measured from the heading onwards,
+    # so the test is "does anything follow it", not "is it far from the end".
+    #
+    # Two earlier versions got this wrong in the same direction. One rejected
+    # any heading in the last 200 characters; the other required 40
+    # characters after the heading's start rather than after the heading
+    # itself. Both sent symptom-first articles - where a late heading is the
+    # normal shape, not a warning sign - straight back to the preamble this
+    # function exists to skip.
+    tail = text[best:].strip()
+    if best <= 0 or len(tail) < 20:
+        return text[:budget].rstrip() + ' ...'
+
+    lead = text[:220].rstrip()
+    steps = text[best:best + (budget - len(lead) - 20)].rstrip()
+    return f'{lead} ... [procedure] {steps} ...'
+
+
 def _fmt_kb(articles: List[Dict[str, Any]]) -> str:
     if not articles:
         return '(no relevant knowledge articles found)'
@@ -111,7 +195,7 @@ def _fmt_kb(articles: List[Dict[str, Any]]) -> str:
         lines.append(
             f"- {article.get('number', '?')}{score_text}: "
             f"{article.get('short_description', '')}\n"
-            f"    {(article.get('body') or '')[:700]}"
+            f"    {kb_excerpt(article.get('body') or '')}"
         )
     return '\n'.join(lines)
 

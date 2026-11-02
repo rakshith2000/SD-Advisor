@@ -988,3 +988,46 @@ input.narrow { min-width: 96px; }
   .tz-picker select { max-width: 110px; }
   table.data th { position: static; }
 }
+
+/* ---------------------------------------------------------------------------
+   Knowledge articles on the ticket page
+
+   Both halves are listed: what the model was given, and what it used. The
+   cited ones carry an accent rail; the rest sit recessed. The contrast is
+   the point - "it had three and used none" is the shape of a retrieval
+   problem, and it only reads if the unused ones are visible.
+   --------------------------------------------------------------------------- */
+
+.kb-list { display: flex; flex-direction: column; gap: 10px; }
+
+.kb-item {
+  border: 1px solid var(--grid);
+  border-left: 3px solid var(--axis);
+  border-radius: var(--radius);
+  padding: 11px 14px;
+  background: var(--surface-2);
+}
+
+.kb-item.is-cited {
+  border-left-color: var(--accent);
+  background: var(--surface-1);
+}
+
+.kb-head {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+  font-size: 13px;
+}
+
+.kb-note {
+  margin: 7px 0 0;
+  font-size: 12.5px; line-height: 1.55;
+  color: var(--text-secondary);
+}
+
+/* The rating row. Deliberately a separate question from the agree/disagree
+   control above it, and spaced away from it so the two do not read as one. */
+.kb-verdict {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 7px;
+  margin-top: 10px; padding-top: 9px;
+  border-top: 1px dashed var(--grid);
+}

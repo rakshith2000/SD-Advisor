@@ -814,11 +814,25 @@ def create_app(config_path: Optional[str] = None) -> FastAPI:
         snooze = ctx.db.query_one(
             'SELECT * FROM suppression WHERE incident_number = %s', (number,))
 
+        # Every article that was put in front of the model for this
+        # recommendation, cited or not. Showing the uncited ones is the
+        # point: "it had these three and used none of them" is how a lead
+        # spots that retrieval is matching wording rather than fault.
+        knowledge = []
+        if recommendation.get('id'):
+            knowledge = ctx.db.retrieve(
+                'recommendation_kb',
+                conditions=[{'col': 'recommendation_id', 'op': 'eq',
+                             'val': recommendation['id']}],
+                order_by='cited DESC, similarity DESC')
+
         return render(request, 'ticket.html',
                       row=decorated, ticket=ticket, signal=signal,
                       breakdown=breakdown, recommendation=recommendation,
                       evidence=evidence, feedback=feedback,
+                      knowledge=knowledge,
                       activity=group_activity(timeline), snooze=snooze,
+                      kb_rated=bool(request.query_params.get('kb_rated')),
                       snow_url=str(ctx.settings.get('servicenow.url', '')).rstrip('/'))
 
     # -----------------------------------------------------------------
@@ -884,6 +898,45 @@ def create_app(config_path: Optional[str] = None) -> FastAPI:
         background.add_task(_reanalyse_one, orchestrator, ticket)
         log.info('%s requested re-analysis of %s', user['username'], number)
         return RedirectResponse(f'/ticket/{number}?queued=1', status_code=303)
+
+    @app.post('/ticket/{number}/kb/{kb_number}/verdict')
+    async def rate_kb(request: Request, number: str, kb_number: str,
+                      user: Dict[str, Any] = Depends(require_write)):
+        """Was this the right article?
+
+        A separate question from whether the lead agreed with the action, and
+        kept separate on purpose. An article can be the right one behind a
+        judgement call the lead would have made differently, and a plausible
+        wrong article can sit behind an action that happened to be correct.
+        Rolling the two together makes both numbers unreadable.
+        """
+        fetch_in_scope(user, number)
+
+        verdict = str((await request.form()).get('verdict', '')).strip().upper()
+        if verdict not in ('RELEVANT', 'IRRELEVANT', 'OUTDATED', 'UNRATED'):
+            raise HTTPException(status_code=400, detail='Not a verdict')
+
+        updated = ctx.db.update(
+            'recommendation_kb',
+            {'verdict': verdict,
+             'rated_by': None if verdict == 'UNRATED' else user['username'],
+             'rated_at': None if verdict == 'UNRATED' else utc_now()},
+            conditions=[{'col': 'incident_number', 'op': 'eq', 'val': number},
+                        {'col': 'kb_number', 'op': 'eq', 'val': kb_number},
+                        {'col': 'cited', 'op': 'eq', 'val': 1}])
+
+        if not updated:
+            # Only cited articles are rateable - rating one the model merely
+            # had available would measure retrieval, not the recommendation,
+            # and the two are reported separately.
+            raise HTTPException(
+                status_code=404,
+                detail=f'{kb_number} was not cited on {number}')
+
+        log.info('%s rated %s on %s as %s',
+                 user['username'], kb_number, number, verdict)
+        return RedirectResponse(f'/ticket/{number}?kb_rated=1#knowledge',
+                                status_code=303)
 
     # -----------------------------------------------------------------
     # agents & accuracy
@@ -1446,7 +1499,105 @@ def _accuracy_metrics(ctx, days: int) -> Dict[str, Any]:
          ORDER BY day
     """, (since,))
 
+    # -- knowledge base ---------------------------------------------------
+    #
+    # Three separate questions, deliberately not rolled into one number.
+    #
+    #   reach      of the recommendations made, how many rested on an article
+    #   precision  of the articles retrieved, how many the model actually used
+    #   relevance  of the articles it used, how many a lead called correct
+    #
+    # A single "KB accuracy" figure would hide the common failure, which is
+    # high relevance on a tiny reach: the articles it cites are right, and it
+    # almost never finds one. That reads as success and is a knowledge gap.
+    kb = ctx.db.query_one("""
+        SELECT COUNT(DISTINCT k.recommendation_id)                      AS with_offer,
+               COUNT(DISTINCT CASE WHEN k.cited = 1
+                                   THEN k.recommendation_id END)        AS with_citation,
+               SUM(k.offered = 1)                                       AS offered,
+               SUM(k.cited = 1)                                         AS cited,
+               SUM(k.cited = 1 AND k.offered = 0)                       AS invented,
+               SUM(k.source = 'text_search')                            AS fallback
+          FROM recommendation_kb k
+          JOIN recommendation r ON r.id = k.recommendation_id
+         WHERE r.created_at >= %s
+    """, (since,)) or {}
+
+    kb_rated = ctx.db.query_one("""
+        SELECT COUNT(*)                            AS rated,
+               SUM(verdict = 'RELEVANT')           AS relevant,
+               SUM(verdict = 'IRRELEVANT')         AS irrelevant,
+               SUM(verdict = 'OUTDATED')           AS outdated
+          FROM recommendation_kb
+         WHERE cited = 1 AND verdict <> 'UNRATED' AND rated_at >= %s
+    """, (since,)) or {}
+
+    # Does a recommendation backed by an article land better than one that is
+    # not? The question the whole retrieval half of the pipeline exists to
+    # answer, and it needs the two populations side by side.
+    kb_effect = ctx.db.query("""
+        SELECT CASE WHEN EXISTS (SELECT 1 FROM recommendation_kb k
+                                  WHERE k.recommendation_id = r.id AND k.cited = 1)
+                    THEN 'backed' ELSE 'unbacked' END          AS bucket,
+               COUNT(*)                                        AS judged,
+               SUM(f.decision IN ('ACCEPTED','MODIFIED'))      AS agreed
+          FROM recommendation_feedback f
+          JOIN recommendation r ON r.id = f.recommendation_id
+         WHERE f.created_at >= %s
+         GROUP BY bucket
+    """, (since,))
+
+    def _pct(numerator, denominator):
+        n, d = int(numerator or 0), int(denominator or 0)
+        return round(100.0 * n / d, 1) if d else None
+
+    backed = next((b for b in kb_effect if b['bucket'] == 'backed'), {})
+    unbacked = next((b for b in kb_effect if b['bucket'] == 'unbacked'), {})
+
+    # The articles doing the most work, and the ones a lead has marked wrong.
+    kb_top = ctx.db.query("""
+        SELECT k.kb_number,
+               COUNT(*)                                     AS offers,
+               SUM(k.cited = 1)                             AS cites,
+               SUM(k.verdict = 'RELEVANT')                  AS relevant,
+               SUM(k.verdict IN ('IRRELEVANT','OUTDATED'))  AS wrong
+          FROM recommendation_kb k
+          JOIN recommendation r ON r.id = k.recommendation_id
+         WHERE r.created_at >= %s
+         GROUP BY k.kb_number
+         ORDER BY cites DESC, offers DESC
+         LIMIT 10
+    """, (since,))
+
+    recommended_total = int(coverage.get('recommended') or 0)
+
     return {
+        'kb': {
+            'recommendations': recommended_total,
+            'with_offer': int(kb.get('with_offer') or 0),
+            'with_citation': int(kb.get('with_citation') or 0),
+            # Of everything recommended, how much rested on an article.
+            'reach_pct': _pct(kb.get('with_citation'), recommended_total),
+            'offered': int(kb.get('offered') or 0),
+            'cited': int(kb.get('cited') or 0),
+            # Of the articles retrieved, how many earned their place.
+            'use_pct': _pct(kb.get('cited'), kb.get('offered')),
+            'rated': int(kb_rated.get('rated') or 0),
+            'relevant': int(kb_rated.get('relevant') or 0),
+            'irrelevant': int(kb_rated.get('irrelevant') or 0),
+            'outdated': int(kb_rated.get('outdated') or 0),
+            'relevance_pct': _pct(kb_rated.get('relevant'), kb_rated.get('rated')),
+            # A cited article that was never supplied is a fabricated number.
+            'invented': int(kb.get('invented') or 0),
+            # The keyword fallback only runs when the vector index is empty
+            # or stale, so a rise here means the nightly build has stopped.
+            'fallback': int(kb.get('fallback') or 0),
+            'backed_judged': int(backed.get('judged') or 0),
+            'backed_pct': _pct(backed.get('agreed'), backed.get('judged')),
+            'unbacked_judged': int(unbacked.get('judged') or 0),
+            'unbacked_pct': _pct(unbacked.get('agreed'), unbacked.get('judged')),
+            'top': kb_top,
+        },
         'total_feedback': total,
         'accepted': accepted,
         'modified': modified,

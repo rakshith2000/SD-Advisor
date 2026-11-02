@@ -122,7 +122,88 @@ class Advisor:
 
         row = self._persist(number, recommendation, input_hash, meta,
                             redactions=redactor.redaction_count)
+
+        # Recorded against the unredacted articles: the redactor only scrubs
+        # values inside the text, and the article numbers are what this is
+        # keyed on.
+        self._record_kb(row, number, kb_articles, recommendation)
         return row, False
+
+    # -- knowledge base accounting ----------------------------------------
+
+    def _record_kb(self, row: Dict[str, Any], number: str,
+                   offered: List[Dict[str, Any]],
+                   rec: Recommendation) -> None:
+        """Which articles were shown, and which the model said it used.
+
+        Both, because the useful failures live in the gap. An article offered
+        on fifty tickets and cited on none means retrieval is matching
+        wording rather than fault; an article cited constantly and rated
+        irrelevant means the model is reaching for whatever was supplied.
+        Storing only citations hides the first case entirely.
+
+        Never raises. A recommendation that was computed and stored must not
+        be lost because its accounting row would not write - the figure this
+        feeds is worth less than the recommendation itself.
+        """
+        recommendation_id = row.get('id')
+        if not recommendation_id:
+            return
+
+        cited: Dict[str, str] = {}
+        for item in rec.evidence:
+            if getattr(item.type, 'value', item.type) != 'kb':
+                continue
+            ref = (item.ref or '').strip()
+            if ref:
+                cited[ref.upper()] = (item.note or '')[:1000]
+
+        rows = []
+        seen = set()
+        for article in offered:
+            kb_number = str(article.get('number') or '').strip()
+            if not kb_number or kb_number.upper() in seen:
+                continue
+            seen.add(kb_number.upper())
+            rows.append({
+                'recommendation_id': recommendation_id,
+                'incident_number': number,
+                'kb_number': kb_number,
+                'source': str(article.get('source') or 'vector')[:20],
+                'similarity': article.get('score'),
+                'offered': 1,
+                'cited': int(kb_number.upper() in cited),
+                'cite_note': cited.get(kb_number.upper()),
+                'created_at': utc_now(),
+            })
+
+        # A citation for an article that was never offered means the model
+        # invented a number. Recorded rather than dropped: it is a
+        # hallucination, and the KB accuracy figure is where it should show.
+        for ref, note in cited.items():
+            if ref in seen:
+                continue
+            log.warning('%s cited %s, which was not among the articles supplied',
+                        number, ref)
+            rows.append({
+                'recommendation_id': recommendation_id,
+                'incident_number': number,
+                'kb_number': ref,
+                'source': 'not_offered',
+                'similarity': None,
+                'offered': 0,
+                'cited': 1,
+                'cite_note': note,
+                'created_at': utc_now(),
+            })
+
+        for record in rows:
+            try:
+                self.db.upsert('recommendation_kb', record, update_columns=[
+                    'source', 'similarity', 'offered', 'cited', 'cite_note'])
+            except Exception:
+                log.debug('Could not record KB usage for %s / %s',
+                          number, record['kb_number'], exc_info=True)
 
     # -- persistence -------------------------------------------------------
 

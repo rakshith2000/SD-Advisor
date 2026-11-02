@@ -197,4 +197,117 @@
 </div>
 {% endif %}
 
+{#
+  Knowledge base.
+
+  Three figures, deliberately not rolled into one. A single "KB accuracy"
+  number hides the common failure, which is high relevance on a tiny reach:
+  the articles it cites are right, and it almost never finds one. That reads
+  as success and is a knowledge gap.
+#}
+<div class="card">
+  <div class="card-head">
+    <h2>Knowledge base</h2>
+    <span class="sub">Whether the articles are found, used, and right</span>
+  </div>
+  <div class="card-body">
+    <div class="tiles" style="margin-bottom:14px;">
+      {{ tile('Reach',
+              (kb.reach_pct ~ '%') if kb.reach_pct is not none else '-',
+              kb.with_citation ~ ' of ' ~ kb.recommendations ~ ' rested on an article',
+              'good' if (kb.reach_pct or 0) >= 40 else 'warning') }}
+      {{ tile('Retrieval used',
+              (kb.use_pct ~ '%') if kb.use_pct is not none else '-',
+              kb.cited ~ ' of ' ~ kb.offered ~ ' retrieved articles were cited',
+              'good' if (kb.use_pct or 0) >= 33 else 'warning') }}
+      {{ tile('Rated relevant',
+              (kb.relevance_pct ~ '%') if kb.relevance_pct is not none else '-',
+              (kb.rated ~ ' judged by a lead') if kb.rated
+                else 'nobody has rated an article yet',
+              'good' if (kb.relevance_pct or 0) >= 80 else
+              ('critical' if kb.rated else none)) }}
+      {{ tile('Fabricated citations', kb.invented,
+              'articles cited that were never supplied',
+              'critical' if kb.invented else 'good') }}
+    </div>
+
+    {% if kb.fallback %}
+    <div class="banner">
+      <div>
+        <strong>{{ kb.fallback }} article{{ 's' if kb.fallback != 1 }} came from keyword
+        search, not the index.</strong>
+        The fallback only runs when the vector index is empty or stale, so this
+        usually means the nightly index build has stopped. Check the
+        <code>maintenance</code> job.
+      </div>
+    </div>
+    {% endif %}
+
+    {#
+      The question the whole retrieval half of the pipeline exists to answer.
+      Both populations shown side by side, with their sample sizes, because a
+      ten-point gap on nine tickets is not a finding.
+    #}
+    <h3 style="font-size:13px;margin:4px 0 8px;">Does an article make the advice better?</h3>
+    <table class="data">
+      <thead>
+        <tr><th>Recommendations</th><th class="num">Judged</th>
+            <th class="num">Lead agreed</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Backed by a knowledge article</td>
+          <td class="num tnum">{{ kb.backed_judged }}</td>
+          <td class="num tnum">
+            {{ (kb.backed_pct ~ '%') if kb.backed_pct is not none else '-' }}
+          </td>
+        </tr>
+        <tr>
+          <td>No article cited</td>
+          <td class="num tnum">{{ kb.unbacked_judged }}</td>
+          <td class="num tnum">
+            {{ (kb.unbacked_pct ~ '%') if kb.unbacked_pct is not none else '-' }}
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    {% if kb.backed_judged < 20 or kb.unbacked_judged < 20 %}
+    <p class="subtle" style="margin-top:7px;">
+      Too few judgements on one side to read a difference yet. Both columns
+      need to be in the dozens before the gap means anything.
+    </p>
+    {% endif %}
+
+    {% if kb.top %}
+    <h3 style="font-size:13px;margin:18px 0 8px;">Most-used articles</h3>
+    <table class="data">
+      <thead>
+        <tr><th>Article</th><th class="num">Offered</th><th class="num">Used</th>
+            <th class="num">Rated right</th><th class="num">Rated wrong</th></tr>
+      </thead>
+      <tbody>
+        {% for article in kb.top %}
+        <tr>
+          <td class="tnum">{{ article.kb_number }}</td>
+          <td class="num tnum">{{ article.offers }}</td>
+          <td class="num tnum">{{ article.cites }}</td>
+          <td class="num tnum">{{ article.relevant or 0 }}</td>
+          <td class="num tnum">
+            {% if article.wrong %}
+            <span class="chip alert">{{ article.wrong }}</span>
+            {% else %}0{% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    <p class="subtle" style="margin-top:7px;">
+      An article offered often and used rarely is a retrieval problem &mdash; it
+      matches the wording and not the fault. One used often and rated wrong is
+      a content problem.
+    </p>
+    {% endif %}
+  </div>
+</div>
+
 {% endblock %}

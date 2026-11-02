@@ -108,6 +108,96 @@
       </div>
     </div>
 
+    {#
+      Knowledge articles.
+
+      Both halves are shown - what the model was given, and what it used -
+      because the useful failure is the gap. "It had these three and cited
+      none" is how a lead notices that retrieval is matching wording rather
+      than fault, and that is invisible if only citations are listed.
+
+      Rating is a separate question from agreeing with the action, and the
+      control says so. An article can be the right one behind a judgement
+      call the lead would have made differently.
+    #}
+    {% if knowledge %}
+    <div class="card" id="knowledge">
+      <div class="card-head">
+        <h2>Knowledge articles</h2>
+        <span class="sub">
+          {{ knowledge | selectattr('cited') | list | length }} of
+          {{ knowledge|length }} used in the recommendation
+        </span>
+      </div>
+      <div class="card-body">
+        {% if kb_rated %}
+        <div class="banner good" style="margin-top:0;">
+          <div><strong>Thank you.</strong> That feeds the knowledge accuracy figure.</div>
+        </div>
+        {% endif %}
+
+        <div class="kb-list">
+          {% for item in knowledge %}
+          <div class="kb-item {{ 'is-cited' if item.cited }}">
+            <div class="kb-head">
+              <span class="tnum"><strong>{{ item.kb_number }}</strong></span>
+              {% if item.cited %}
+              <span class="chip alt">Used</span>
+              {% else %}
+              <span class="chip">Offered, not used</span>
+              {% endif %}
+              {% if item.similarity %}
+              <span class="subtle">similarity {{ '%.2f'|format(item.similarity) }}</span>
+              {% endif %}
+              {% if item.source == 'text_search' %}
+              <span class="chip warn" title="The vector index was empty or stale">Keyword fallback</span>
+              {% elif item.source == 'not_offered' %}
+              <span class="chip alert" title="The model cited a number that was never supplied">Not supplied</span>
+              {% endif %}
+            </div>
+
+            {% if item.cite_note %}
+            <p class="kb-note">{{ item.cite_note }}</p>
+            {% endif %}
+
+            {% if item.cited %}
+            <div class="kb-verdict">
+              {% if item.verdict == 'UNRATED' %}
+              <span class="subtle">Was this the right article?</span>
+              {% for value, label in [('RELEVANT', 'Yes'),
+                                      ('IRRELEVANT', 'Not relevant'),
+                                      ('OUTDATED', 'Out of date')] %}
+              <form method="post"
+                    action="/ticket/{{ row.incident_number }}/kb/{{ item.kb_number }}/verdict"
+                    style="display:inline;">
+                <input type="hidden" name="verdict" value="{{ value }}">
+                <button class="btn small" type="submit">{{ label }}</button>
+              </form>
+              {% endfor %}
+              {% else %}
+              <span class="chip {{ 'alert' if item.verdict != 'RELEVANT' }}">
+                {{ item.verdict|capitalize }}
+              </span>
+              <span class="subtle">
+                rated by {{ item.rated_by }}
+                {%- if item.rated_at %} on {{ item.rated_at | localdt('%d %b %Y') }}{% endif %}
+              </span>
+              <form method="post"
+                    action="/ticket/{{ row.incident_number }}/kb/{{ item.kb_number }}/verdict"
+                    style="display:inline;">
+                <input type="hidden" name="verdict" value="UNRATED">
+                <button class="linkish" type="submit">Undo</button>
+              </form>
+              {% endif %}
+            </div>
+            {% endif %}
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+    {% endif %}
+
     <!-- Drafts -->
     {% if recommendation.draft_work_note or recommendation.draft_caller_message %}
     <div class="card">
