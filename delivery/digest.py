@@ -18,7 +18,8 @@ from typing import Any, Dict, List, Optional
 from core.logging_setup import get_logger
 from pipeline.scoring import top_reasons
 from pipeline.signals import SERVICE_DESK
-from core.timeutil import format_duration, format_duration_days, utc_now
+from core.timeutil import (format_days, format_duration, format_duration_days,
+                           utc_now)
 
 log = get_logger('delivery.digest')
 
@@ -161,8 +162,21 @@ class DigestBuilder:
 
         action = row.get('recommended_action') or ''
         item['action_label'] = ACTION_LABELS.get(action, action.replace('_', ' ').title() or 'Not analysed')
-        item['pending_action_owner_label'] = self.owner_labels.get(
-            row.get('pending_action_owner') or '', row.get('pending_action_owner') or '-')
+
+        # Who owes the next action. SERVICE_DESK is a role rather than a
+        # queue - it means "the team this incident is assigned to" - so on a
+        # single row the useful answer is that team's actual name. "Assigned
+        # team" is correct and tells a reader nothing they did not already
+        # know; "Desktop Support" tells them who to go and ask.
+        #
+        # The configured label stays as the fallback for a ticket with no
+        # assignment group at all, where there is no name to print.
+        owner = row.get('pending_action_owner') or ''
+        if owner == SERVICE_DESK:
+            group = str(row.get('assignment_group') or '').strip()
+            item['pending_action_owner_label'] = group or self.owner_labels[SERVICE_DESK]
+        else:
+            item['pending_action_owner_label'] = self.owner_labels.get(owner, owner or '-')
 
         item['severity'] = self._severity(row.get('attention_score') or 0)
         item['confidence_pct'] = int(round(float(row.get('confidence') or 0) * 100))
@@ -173,6 +187,12 @@ class DigestBuilder:
         # decimal places of a day cannot express "30 Mins".
         item['age_display'] = format_duration(row.get('age_minutes'))
         item['idle_display'] = format_duration(row.get('idle_minutes'))
+
+        # Whole days, for email. Both forms are computed here rather than in
+        # the templates so the board and the digest can never disagree about
+        # the underlying figure - only about how much of it to show.
+        item['age_days_display'] = format_days(row.get('age_minutes'))
+        item['idle_days_display'] = format_days(row.get('idle_minutes'))
 
         item['url'] = f"{self.base_url}/ticket/{row['incident_number']}" if self.base_url else ''
         return item

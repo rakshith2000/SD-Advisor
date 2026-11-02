@@ -153,6 +153,43 @@ def format_duration(minutes: Any, zero: str = '0 Mins') -> str:
     return ' '.join(parts)
 
 
+def format_days(minutes: Any) -> str:
+    """Whole days only, for email.
+
+        15150 -> '10 Days'      (10 days 12 hrs - truncated, not rounded)
+         1441 -> '1 Day'
+          180 -> 'Under a day'
+
+    The board keeps the exact 'Days Hrs Mins' rendering, because somebody
+    reading it is deciding what to do in the next ten minutes. An email is
+    read once over coffee and the hours never change the decision, so the
+    extra precision is noise in a column that has to stay narrow.
+
+    Truncated rather than rounded: '10 Days' for ten and a half is the
+    convention every ITSM tool uses, and rounding up would have a ticket
+    report a day it has not yet been open.
+
+    Anything under a day is named rather than shown as '0 Days', which on an
+    aged-ticket report reads as a broken value rather than a small one. It
+    happens often for idle time - a ticket touched this morning.
+    """
+    if minutes is None:
+        return ''
+
+    try:
+        total = int(round(float(minutes)))
+    except (TypeError, ValueError):
+        return ''
+
+    if total < 0:
+        total = 0
+
+    days = total // MINUTES_PER_DAY
+    if days < 1:
+        return 'Under a day'
+    return f'{days} Day' if days == 1 else f'{days} Days'
+
+
 def format_duration_days(days: Any, zero: str = '0 Mins') -> str:
     """Same rendering from a value expressed in days.
 

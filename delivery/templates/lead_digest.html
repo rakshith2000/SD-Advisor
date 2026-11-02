@@ -101,10 +101,26 @@
     {% endif %}
   </td>
 
-  <td style="padding:12px 10px;border-bottom:1px solid {{ RULE }};vertical-align:top;white-space:nowrap;
-             font:400 12px/1.5 {{ FONT }};color:{{ INK2 }};font-variant-numeric:tabular-nums;">
-    {{ row.age_display }}<br>
-    <span style="color:{{ MUTED }};">idle {{ row.idle_display }}</span>
+  {#
+    Whole days only here. The board keeps "10 Days 12 Hrs" because somebody
+    reading it is deciding what to do in the next ten minutes; an email is
+    read once and the hours never change the decision.
+
+    Age and idle are two different measurements and are spaced apart as
+    such. Run together on consecutive lines they read as one wrapped value,
+    and a lead scanning the column takes the second number for part of the
+    first.
+  #}
+  <td style="padding:12px 10px;border-bottom:1px solid {{ RULE }};vertical-align:top;white-space:nowrap;">
+    <div style="font:600 12.5px/1.4 {{ FONT }};color:{{ INK }};
+                font-variant-numeric:tabular-nums;">{{ row.age_days_display }}</div>
+    <div style="font:400 10px/1.3 {{ FONT }};color:{{ MUTED }};
+                text-transform:uppercase;letter-spacing:.05em;">open</div>
+    <div style="height:9px;line-height:9px;font-size:0;">&nbsp;</div>
+    <div style="font:600 12.5px/1.4 {{ FONT }};color:{{ INK2 }};
+                font-variant-numeric:tabular-nums;">{{ row.idle_days_display }}</div>
+    <div style="font:400 10px/1.3 {{ FONT }};color:{{ MUTED }};
+                text-transform:uppercase;letter-spacing:.05em;">idle</div>
   </td>
 
   <td style="padding:12px 10px;border-bottom:1px solid {{ RULE }};vertical-align:top;white-space:nowrap;
@@ -260,7 +276,7 @@
         </td>
         <td style="padding:7px 8px;border-bottom:1px solid {{ RULE }};white-space:nowrap;
                    font:400 11px/1.4 {{ FONT }};color:{{ MUTED }};font-variant-numeric:tabular-nums;">
-          idle {{ row.idle_display }}
+          idle {{ row.idle_days_display }}
         </td>
       </tr>
       {% endfor %}

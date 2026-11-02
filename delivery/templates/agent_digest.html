@@ -114,9 +114,11 @@
           </div>
           <div style="font:400 11px/1.55 {{ FONT }};color:{{ MUTED }};padding-top:4px;
                       font-variant-numeric:tabular-nums;">
-            {{ severity_label(row.severity) }} &middot; open {{ row.age_display }}
-            &middot; idle {{ row.idle_display }}
-            &middot; pending action owner: {{ row.pending_action_owner_label }}
+            {# Whole days, as in the lead digest. Same reasoning: an email
+               is read once, and the hours never change the decision. #}
+            {{ severity_label(row.severity) }} &middot; open {{ row.age_days_display }}
+            &nbsp;&nbsp;&middot;&nbsp;&nbsp; idle {{ row.idle_days_display }}
+            &nbsp;&nbsp;&middot;&nbsp;&nbsp; pending action owner: {{ row.pending_action_owner_label }}
             {%- if row.caller_name %} &middot; caller {{ row.caller_name }}{% endif %}
           </div>
           {% if row.flag_labels %}
