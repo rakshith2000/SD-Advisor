@@ -36,6 +36,7 @@ from pipeline.scoring import DEFAULT_WEIGHTS
 from web import auth
 from web.access import (ALREADY_DECIDED, NOT_FOUND, REFUSED,
                         AccessRequestError, RoleRequestService)
+from web import exporting
 from web.activity import group_activity
 from web.auth import (SessionManager, UserStore, require_admin, require_lead,
                       require_user, require_write, safe_next)
@@ -746,21 +747,12 @@ def create_app(config_path: Optional[str] = None) -> FastAPI:
 
         all_groups = ctx.known_assignment_groups()
         visible = users.visible_groups(user, all_groups)
-        groups = narrow_scope(user, group)
 
-        # board_rows treats None as "every group", so an empty scope has to
-        # short-circuit here. Passing `groups or None` - the previous shape -
-        # would turn "entitled to nothing" into "entitled to everything".
-        rows = ([] if not groups else
-                builder.board_rows(assignment_groups=groups, agent=agent,
-                                   include_snoozed=show_snoozed, min_score=min_score))
-
-        if ball:
-            rows = [r for r in rows if r.get('pending_action_owner') == ball]
-        if flag:
-            rows = [r for r in rows if flag in (r.get('risk_flags') or [])]
-        if action:
-            rows = [r for r in rows if r.get('recommended_action') == action]
+        # One implementation, shared with the export routes. Two copies of
+        # this would eventually disagree, and the way anybody would find out
+        # is a downloaded spreadsheet containing rows the screen did not.
+        _groups, rows = _board_selection(user, group, agent, ball, flag,
+                                         action, min_score, show_snoozed)
 
         summary = builder.summarise(rows)
         movement = builder.movement_since(rows)
@@ -773,6 +765,116 @@ def create_app(config_path: Optional[str] = None) -> FastAPI:
                       filters={'group': group, 'agent': agent, 'ball': ball,
                                'flag': flag, 'action': action,
                                'min_score': min_score, 'show_snoozed': show_snoozed})
+
+    # -----------------------------------------------------------------
+    # board export
+    # -----------------------------------------------------------------
+
+    def _board_selection(user: Dict[str, Any], group, agent, ball, flag,
+                         action, min_score, show_snoozed):
+        """The rows the board would show, under the same scope and filters.
+
+        Shared with the board route rather than reimplemented. A download
+        that quietly contains more than the screen did is the failure to
+        avoid here - these files leave the building, and nobody re-checks a
+        spreadsheet against the page it came from.
+        """
+        groups = narrow_scope(user, group)
+        rows = ([] if not groups else
+                builder.board_rows(assignment_groups=groups, agent=agent,
+                                   include_snoozed=show_snoozed,
+                                   min_score=min_score))
+        if ball:
+            rows = [r for r in rows if r.get('pending_action_owner') == ball]
+        if flag:
+            rows = [r for r in rows if flag in (r.get('risk_flags') or [])]
+        if action:
+            rows = [r for r in rows if r.get('recommended_action') == action]
+        return groups, rows
+
+    def _export_payload(request: Request, user: Dict[str, Any], group, agent,
+                        ball, flag, action, min_score, show_snoozed):
+        groups, rows = _board_selection(user, group, agent, ball, flag,
+                                        action, min_score, show_snoozed)
+
+        rollup = builder.by_agent(rows)
+        compliance = builder.compliance_context(
+            [entry['agent'] for entry in rollup][:60])
+        for entry in rollup:
+            entry['compliance'] = compliance.get(entry['agent'])
+
+        zone = tz_for(user)
+        filters = {'group': group, 'agent': agent, 'ball': ball, 'flag': flag,
+                   'action': action, 'min_score': min_score,
+                   'show_snoozed': show_snoozed}
+
+        context = {
+            'generated_at': format_dt(utc_now(), zone, '%d %b %Y %H:%M'),
+            'timezone': zone_abbreviation(zone),
+            'exported_by': user.get('full_name') or user['username'],
+            'filters_described': exporting.describe_filters(filters, groups),
+        }
+        return rows, rollup, context
+
+    @app.get('/board/export.xlsx')
+    def export_board_excel(request: Request,
+                           user: Dict[str, Any] = Depends(require_lead),
+                           group: Optional[str] = None,
+                           agent: Optional[str] = None,
+                           ball: Optional[str] = None,
+                           flag: Optional[str] = None,
+                           action: Optional[str] = None,
+                           min_score: int = 0,
+                           show_snoozed: bool = False):
+        rows, rollup, context = _export_payload(
+            request, user, group, agent, ball, flag, action, min_score,
+            show_snoozed)
+
+        try:
+            body = exporting.build_workbook(rows, rollup, context)
+        except exporting.ExportUnavailable as exc:
+            raise HTTPException(status_code=503, detail=str(exc))
+
+        # A bulk extraction of incident descriptions and caller names is
+        # worth a log line naming who took it and how much.
+        log.warning('%s exported %d board row(s) and %d agent(s) to Excel (%s)',
+                    user['username'], len(rows), len(rollup),
+                    '; '.join(context['filters_described']))
+
+        name = exporting.filename('aged-tickets', 'xlsx', group)
+        return Response(
+            content=body,
+            media_type='application/vnd.openxmlformats-officedocument.'
+                       'spreadsheetml.sheet',
+            headers={'Content-Disposition': f'attachment; filename="{name}"'})
+
+    @app.get('/board/export.pdf')
+    def export_board_pdf(request: Request,
+                         user: Dict[str, Any] = Depends(require_lead),
+                         group: Optional[str] = None,
+                         agent: Optional[str] = None,
+                         ball: Optional[str] = None,
+                         flag: Optional[str] = None,
+                         action: Optional[str] = None,
+                         min_score: int = 0,
+                         show_snoozed: bool = False):
+        rows, rollup, context = _export_payload(
+            request, user, group, agent, ball, flag, action, min_score,
+            show_snoozed)
+
+        try:
+            body = exporting.build_pdf(rows, rollup, context)
+        except exporting.ExportUnavailable as exc:
+            raise HTTPException(status_code=503, detail=str(exc))
+
+        log.warning('%s exported %d board row(s) and %d agent(s) to PDF (%s)',
+                    user['username'], len(rows), len(rollup),
+                    '; '.join(context['filters_described']))
+
+        name = exporting.filename('aged-tickets', 'pdf', group)
+        return Response(
+            content=body, media_type='application/pdf',
+            headers={'Content-Disposition': f'attachment; filename="{name}"'})
 
     # -----------------------------------------------------------------
     # ticket detail

@@ -1031,3 +1031,12 @@ input.narrow { min-width: 96px; }
   margin-top: 10px; padding-top: 9px;
   border-top: 1px dashed var(--grid);
 }
+
+/* Export buttons in the board's card header. Pushed to the right of the
+   title and away from the sort note, so they do not read as part of it. */
+.card-head .export-actions {
+  display: inline-flex;
+  gap: 6px;
+  margin-left: auto;
+  padding-left: 12px;
+}

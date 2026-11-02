@@ -39,4 +39,11 @@ openai==2.16.0
 tenacity==9.0.0
 
 # --- Dev / test ---
+# Board exports. openpyxl is required - the Excel button is the detailed
+# export and is not optional. reportlab is only needed for the PDF button,
+# which degrades to a clear message if it is absent rather than taking the
+# page down with it, so a restricted environment can leave it out.
+openpyxl==3.1.5
+reportlab==4.2.5
+
 pytest==8.3.4

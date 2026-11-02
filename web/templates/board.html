@@ -186,6 +186,23 @@
 <div class="card">
   <div class="card-head">
     <h2>{{ rows|length }} ticket{{ 's' if rows|length != 1 }}</h2>
+
+    {#
+      Export carries the current filters, so the file matches the screen it
+      was taken from. Built from request.url.query rather than rebuilt from
+      the filters dict - rebuilding it is how the two drift and somebody
+      downloads a wider list than they were looking at.
+    #}
+    {% if user.role in ('ADMIN', 'LEAD') and rows %}
+    {% set query = ('?' ~ request.url.query) if request.url.query else '' %}
+    <span class="sub export-actions">
+      <a class="btn small" href="/board/export.xlsx{{ query }}"
+         title="Every flag, signal and recommendation field in its own column, plus a By agent sheet">Excel</a>
+      <a class="btn small" href="/board/export.pdf{{ query }}"
+         title="The ranked working list, with By agent on a second page">PDF</a>
+    </span>
+    {% endif %}
+
     <span class="sub">
       {#
         Updated by the sort script. The default text lives in data-default so
