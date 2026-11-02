@@ -124,23 +124,32 @@ class Spec:
 # the allow-list
 # ---------------------------------------------------------------------------
 
+# (key, label, blurb, icon). The icon is a plain character rather than an
+# icon font or an SVG sprite: the page has seven of them, they are decorative
+# beside a written label, and neither a webfont request nor a build step is
+# worth paying for that.
 SECTIONS = [
     ('review', 'Review policy',
      'What counts as aged, idle or at risk. These drive the attention score, '
-     'so a change here reorders the board for everybody.'),
+     'so a change here reorders the board for everybody.', '◔'),
     ('queues', 'Assignment groups',
-     'Which queues this service covers. Everything else is scoped to these.'),
+     'Which queues this service covers. Everything else is scoped to these.',
+     '☷'),
     ('mail', 'Email delivery',
-     'Who the service appears to be, and whether it is actually sending.'),
+     'Who the service appears to be, and whether it is actually sending.',
+     '✉'),
     ('access', 'Access requests',
-     'The self-service workflow on the profile page.'),
+     'The self-service workflow on the profile page.', '⚿'),
     ('display', 'Presentation',
-     'Wording and timestamps. No effect on what is stored or compared.'),
+     'Wording and timestamps. No effect on what is stored or compared.',
+     '◳'),
     ('schedule', 'Schedule',
-     'How often each background pass runs.'),
+     'How often each background pass runs.', '⟳'),
     ('model', 'Recommendations',
-     'Thresholds on the language model output.'),
+     'Thresholds on the language model output.', '◇'),
 ]
+
+SECTION_KEYS = [key for key, _label, _blurb, _icon in SECTIONS]
 
 SPECS: List[Spec] = [
     # -- review policy ----------------------------------------------------
@@ -289,6 +298,37 @@ def editable_keys() -> List[str]:
 
 def section_specs(section: str) -> List[Spec]:
     return [spec for spec in SPECS if spec.section == section]
+
+
+def section_summaries(settings, current: Optional[str] = None) -> List[Dict[str, Any]]:
+    """One entry per section, for the grid of cards at the top of the page.
+
+    The grid exists because the question that page answers is "what can I
+    change here". A reader who cannot see the whole answer at once assumes
+    the rest is somewhere else - which, before this page existed, meant SSH.
+
+    Each card carries how many of its settings have been changed from the
+    file, so the one section somebody has been editing is findable without
+    opening all seven.
+    """
+    overlay = getattr(settings, 'overlay', None)
+    active = overlay.current() if overlay is not None else {}
+
+    summaries = []
+    for key, label, blurb, icon in SECTIONS:
+        specs = section_specs(key)
+        overridden = [s for s in specs if s.key in active]
+        summaries.append({
+            'key': key,
+            'label': label,
+            'blurb': blurb,
+            'icon': icon,
+            'count': len(specs),
+            'overridden': len(overridden),
+            'needs_restart': any(s.applies == RESTART for s in overridden),
+            'active': key == current,
+        })
+    return summaries
 
 
 def restart_pending(settings) -> List[Spec]:

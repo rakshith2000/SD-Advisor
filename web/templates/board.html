@@ -1,6 +1,13 @@
 {% extends "base.html" %}
 {% block title %}Review board &middot; Aged Ticket Advisor{% endblock %}
 
+{#
+  A stat tile: label, value, note. The tone drives a coloured rail down the
+  left edge and a square beside the label as well as the value's colour, so
+  the state is carried by position and shape and not by hue alone - which
+  is what makes it survive a greyscale print, a projector and a reader who
+  cannot separate the red from the green.
+#}
 {% macro tile(label, value, note, tone) %}
 <div class="tile {{ 'is-' ~ tone if tone }}">
   <div class="label">{{ label }}</div>
@@ -162,7 +169,7 @@
   <div class="field">
     <label for="min_score">Min score</label>
     <input id="min_score" name="min_score" type="number" min="0" max="100"
-           value="{{ filters.min_score }}" style="min-width:90px;">
+           class="narrow" value="{{ filters.min_score }}">
   </div>
 
   <label class="checkline">
@@ -254,19 +261,20 @@
 
           <td><strong>{{ row.pending_action_owner_label }}</strong></td>
 
-          <td style="max-width:340px;">
+          <td class="cell-wide">
             {% if row.recommended_action %}
             <strong>{{ row.action_label }}</strong>
             {% if row.suggested_target_group %}
             <span class="subtle">&rarr; {{ row.suggested_target_group }}</span>
             {% endif %}
-            <div class="subtle" style="margin-top:2px;">
-              {% if row.low_confidence %}Requires review &middot; {% endif %}{{ row.confidence_pct }}% confidence
+            <div class="chips">
+              {% if row.low_confidence %}
+              <span class="chip warn">Requires review</span>
+              {% endif %}
+              <span class="chip">{{ row.confidence_pct }}% confidence</span>
             </div>
             {% if row.rationale %}
-            <div class="subtle" style="margin-top:3px;color:var(--text-secondary);">
-              {{ row.rationale|truncate(120, true, '...') }}
-            </div>
+            <div class="rationale">{{ row.rationale|truncate(120, true, '...') }}</div>
             {% endif %}
             {% else %}
             <span class="subtle">Not yet analysed</span>

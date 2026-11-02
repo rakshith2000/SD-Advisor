@@ -4,18 +4,22 @@
 {% block layout %}
 <div class="login-wrap">
   <div class="login-card">
+    <span class="login-mark" aria-hidden="true"></span>
     <h1>Aged Ticket Advisor</h1>
-    <p class="sub">Service desk aged pending ticket review</p>
+    <p class="sub">Aged pending ticket review</p>
 
     {% if error %}<div class="error">{{ error }}</div>{% endif %}
 
     {% if sso_enabled %}
-    <a class="btn primary" style="width:100%;display:block;text-align:center;margin-top:6px;"
-       href="/oidc/login?next={{ next|urlencode }}">Sign in with single sign-on</a>
+    <a class="btn primary" href="/oidc/login?next={{ next|urlencode }}">
+      Sign in with single sign-on
+    </a>
     {% endif %}
 
+    {# A rule with the word on it, rather than a floating "or" - the two
+       routes are alternatives and should read as a fork, not a list. #}
     {% if sso_enabled and local_enabled %}
-    <div class="sub" style="text-align:center;margin:14px 0 10px;">
+    <div class="login-or">
       <span>or</span>
       {% if local_note %}<div class="subtle">{{ local_note }}</div>{% endif %}
     </div>
@@ -33,8 +37,9 @@
         <label for="password">Password</label>
         <input id="password" name="password" type="password" autocomplete="current-password" required>
       </div>
-      <button class="btn {{ 'primary' if not sso_enabled }}" type="submit"
-              style="width:100%;margin-top:6px;">Sign in</button>
+      <button class="btn {{ 'primary' if not sso_enabled }}" type="submit">
+        Sign in
+      </button>
     </form>
     {% endif %}
   </div>

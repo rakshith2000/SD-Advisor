@@ -133,15 +133,19 @@ class TestTheAllowList:
         assert settings.get('vault.url') == 'https://vault.example'
 
     def test_every_spec_has_a_section_that_exists(self):
-        known = {key for key, _label, _blurb in admin_settings.SECTIONS}
         for spec in SPECS:
-            assert spec.section in known, spec.key
+            assert spec.section in admin_settings.SECTION_KEYS, spec.key
 
     def test_every_section_has_at_least_one_setting(self):
-        """A heading in the sidebar that opens an empty panel reads as a
-        broken page."""
-        for key, label, _blurb in admin_settings.SECTIONS:
-            assert admin_settings.section_specs(key), label
+        """A card on the hub that opens an empty panel reads as a broken
+        page."""
+        for key in admin_settings.SECTION_KEYS:
+            assert admin_settings.section_specs(key), key
+
+    def test_every_section_has_a_label_blurb_and_icon(self):
+        for entry in admin_settings.SECTIONS:
+            key, label, blurb, icon = entry
+            assert key and label and blurb and icon
 
     def test_keys_are_unique(self):
         keys = [spec.key for spec in SPECS]
@@ -449,6 +453,49 @@ class TestRowsForThePage:
         the file-value column on the page show the override."""
         settings.overlay.set('thresholds.aged_after_days', 9, 'root')
         assert settings.as_dict()['thresholds']['aged_after_days'] == 5
+
+
+class TestTheSectionCards:
+    """The grid at the top of the page. It answers "what can I change here",
+    so it has to show every area at once and mark the one being edited."""
+
+    def test_there_is_a_card_for_every_section(self, settings):
+        assert ([e['key'] for e in admin_settings.section_summaries(settings)]
+                == admin_settings.SECTION_KEYS)
+
+    def test_each_card_counts_its_settings(self, settings):
+        entry = next(e for e in admin_settings.section_summaries(settings)
+                     if e['key'] == 'review')
+        assert entry['count'] == len(admin_settings.section_specs('review'))
+
+    def test_a_card_shows_how_many_are_changed(self, settings):
+        """So the section somebody has been editing is findable without
+        opening all seven."""
+        settings.overlay.set('thresholds.aged_after_days', 9, 'root')
+        entry = next(e for e in admin_settings.section_summaries(settings)
+                     if e['key'] == 'review')
+        assert entry['overridden'] == 1
+
+    def test_an_untouched_card_counts_nothing(self, settings):
+        entry = next(e for e in admin_settings.section_summaries(settings)
+                     if e['key'] == 'mail')
+        assert entry['overridden'] == 0
+
+    def test_the_card_flags_a_pending_restart(self, settings):
+        settings.overlay.set('scheduler.stream_interval_minutes', 5, 'root')
+        entry = next(e for e in admin_settings.section_summaries(settings)
+                     if e['key'] == 'schedule')
+        assert entry['needs_restart'] is True
+
+    def test_a_live_change_is_not_flagged_as_pending(self, settings):
+        settings.overlay.set('thresholds.aged_after_days', 9, 'root')
+        entry = next(e for e in admin_settings.section_summaries(settings)
+                     if e['key'] == 'review')
+        assert entry['needs_restart'] is False
+
+    def test_exactly_one_card_is_marked_current(self, settings):
+        summaries = admin_settings.section_summaries(settings, 'mail')
+        assert [e['key'] for e in summaries if e['active']] == ['mail']
 
 
 # ---------------------------------------------------------------------------

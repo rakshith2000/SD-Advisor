@@ -157,7 +157,7 @@
       <button class="btn primary" type="submit">Approve</button>
     </form>
 
-    <hr style="margin:18px 0;border:0;border-top:1px solid var(--rule);">
+    <hr>
 
     <form method="post" action="/admin/role-requests/{{ req.id }}/reject">
       <div class="field">
@@ -165,7 +165,7 @@
         <textarea id="reject_note" name="note" rows="2"
                   placeholder="They will see this. A reason saves a follow-up conversation."></textarea>
       </div>
-      <button class="btn small" type="submit">Decline</button>
+      <button class="btn small danger" type="submit">Decline</button>
     </form>
 
   </div>

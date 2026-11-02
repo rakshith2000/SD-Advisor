@@ -17,12 +17,12 @@
 <div class="banner"><div><strong>{{ error }}</strong> Nothing was changed.</div></div>
 {% endif %}
 {% if saved %}
-<div class="banner info"><div><strong>{{ saved }}</strong></div></div>
+<div class="banner good"><div><strong>{{ saved }}</strong></div></div>
 {% endif %}
 
 {#
-  The page is otherwise a convincing liar: the value reads back from the form
-  and the running service is still using the one it started with.
+  Without this the page is a convincing liar: the value reads back from the
+  form and the running service is still using the one it started with.
 #}
 {% if restart_pending %}
 <div class="banner">
@@ -38,144 +38,206 @@
 </div>
 {% endif %}
 
-<div class="settings-layout">
+{#
+  Every area of configuration, visible at once, as separate controls. A
+  sidebar of links makes the reader scan a list to find out what exists; a
+  grid of cards shows them the whole answer and marks the one they have
+  already been editing.
+#}
+<div class="settings-grid">
+  {% for entry in sections %}
+  <a href="/admin/settings?section={{ entry.key }}"
+     class="settings-card {{ 'active' if entry.active }}"
+     {{ 'aria-current=page' if entry.active }}>
+    <span class="settings-card-icon" aria-hidden="true">{{ entry.icon }}</span>
+    <h3>
+      {{ entry.label }}
+      {% if entry.overridden %}
+      <span class="chip alt">{{ entry.overridden }} changed</span>
+      {% endif %}
+    </h3>
+    <p>{{ entry.blurb }}</p>
+    <span class="settings-card-meta">
+      {{ entry.count }} setting{{ 's' if entry.count != 1 }}
+      {% if entry.needs_restart %}
+      <span class="chip warn">Restart pending</span>
+      {% endif %}
+    </span>
+  </a>
+  {% endfor %}
 
-  <nav class="settings-nav">
-    {% for key, label, _blurb in sections %}
-    <a href="/admin/settings?section={{ key }}"
-       class="{{ 'active' if key == section }}">{{ label }}</a>
-    {% endfor %}
-    <a href="/settings/weights">Attention weights</a>
-    <a href="/admin/users">Users and access</a>
-    <hr>
-    <a href="/admin/settings/export">Download conf.json</a>
-  </nav>
+  <a href="/settings/weights" class="settings-card">
+    <span class="settings-card-icon" aria-hidden="true">⚖</span>
+    <h3>Attention weights</h3>
+    <p>
+      How much each signal contributes to the score that ranks the board.
+      Stored per deployment, not in conf.json.
+    </p>
+    <span class="settings-card-meta">8 components</span>
+  </a>
 
-  <div class="settings-main">
-    <div class="card">
-      <div class="card-head">
-        <h2>{{ section_title }}</h2>
-      </div>
-      <div class="card-body">
-        <p class="subtle" style="margin-top:0;">{{ section_blurb }}</p>
+  <a href="/admin/users" class="settings-card">
+    <span class="settings-card-icon" aria-hidden="true">☻</span>
+    <h3>Users and access</h3>
+    <p>
+      Roles, assignment groups, activation and local passwords. The same
+      boundary decides what somebody sees and what reaches their inbox.
+    </p>
+    <span class="settings-card-meta">Accounts and scope</span>
+  </a>
 
-        <form method="post" action="/admin/settings/{{ section }}">
-          {% for row in rows %}
-          {% set spec = row.spec %}
-          <div class="setting {{ 'is-overridden' if row.overridden }}">
-            <div class="setting-label">
-              <label for="{{ spec.key }}">{{ spec.label }}</label>
-              <code class="setting-key">{{ spec.key }}</code>
-              {% if spec.applies == 'restart' %}
-              <span class="chip" title="Read once while the service starts">Restart</span>
-              {% endif %}
-              {% if row.overridden %}
-              <span class="chip alt" title="Differs from conf.json">Overridden</span>
-              {% endif %}
-            </div>
+  <a href="/admin/settings/export" class="settings-card">
+    <span class="settings-card-icon" aria-hidden="true">⤓</span>
+    <h3>Download conf.json</h3>
+    <p>
+      The file as the service is actually running it, overrides folded in.
+      For the deployment that keeps it under source control.
+    </p>
+    <span class="settings-card-meta">Carries no secrets &mdash; those are in Vault</span>
+  </a>
+</div>
 
-            <div class="setting-control">
-              {% if spec.kind == 'bool' %}
-              <label class="checkline">
-                <input type="checkbox" name="{{ spec.key }}" id="{{ spec.key }}"
-                       value="1" {{ 'checked' if row.value }}>
-                {{ spec.label }}
-              </label>
+<div class="card">
+  <div class="card-head">
+    <h2>{{ section_title }}</h2>
+    <span class="sub">{{ rows|length }} setting{{ 's' if rows|length != 1 }}</span>
+  </div>
+  <div class="card-body">
+    <p class="subtle" style="margin-top:0;font-size:13px;">{{ section_blurb }}</p>
 
-              {% elif spec.kind == 'list' %}
-              <textarea name="{{ spec.key }}" id="{{ spec.key }}" rows="4"
-                        placeholder="{{ spec.placeholder }}">{{ spec.display(row.value) }}</textarea>
-
-              {% elif spec.kind == 'choice' %}
-              <select name="{{ spec.key }}" id="{{ spec.key }}">
-                {% for choice in spec.choices %}
-                <option value="{{ choice }}" {{ 'selected' if choice == row.value }}>{{ choice }}</option>
-                {% endfor %}
-              </select>
-
-              {% elif spec.kind in ('int', 'number') %}
-              <input type="number" name="{{ spec.key }}" id="{{ spec.key }}"
-                     value="{{ row.value if row.value is not none }}"
-                     {% if spec.kind == 'number' %}step="0.01"{% endif %}
-                     {% if spec.minimum is not none %}min="{{ spec.minimum }}"{% endif %}
-                     {% if spec.maximum is not none %}max="{{ spec.maximum }}"{% endif %}>
-
-              {% else %}
-              <input type="text" name="{{ spec.key }}" id="{{ spec.key }}"
-                     value="{{ row.value if row.value is not none }}"
-                     placeholder="{{ spec.placeholder }}">
-              {% endif %}
-
-              {% if spec.help %}<div class="subtle">{{ spec.help }}</div>{% endif %}
-              {% if spec.warning %}
-              <div class="setting-warning">{{ spec.warning }}</div>
-              {% endif %}
-
-              {#
-                Shown only where the database and the file disagree, which is
-                the one place somebody reading conf.json over SSH would
-                otherwise draw the wrong conclusion.
-              #}
-              {#
-                Keyed on the setting, not on loop.index - the reset forms
-                below are emitted only for overridden rows, so positional ids
-                would drift apart and the button would submit the wrong form
-                or none at all.
-              #}
-              {% if row.differs_from_file %}
-              <div class="setting-file">
-                conf.json says <code>{{ spec.display(row.file_value) or '(not set)' }}</code>.
-                <button type="submit" class="linkish"
-                        form="reset-{{ spec.key|replace('.', '-') }}">Reset to the file value</button>
-              </div>
-              {% endif %}
-            </div>
+    <form method="post" action="/admin/settings/{{ section }}">
+      {% for row in rows %}
+      {% set spec = row.spec %}
+      <div class="setting {{ 'is-overridden' if row.overridden }}">
+        <div class="setting-label">
+          <label for="{{ spec.key }}">{{ spec.label }}</label>
+          <code class="setting-key">{{ spec.key }}</code>
+          <div class="chips" style="margin-top:0;">
+            {% if spec.applies == 'restart' %}
+            <span class="chip" title="Read once while the service starts">Restart</span>
+            {% else %}
+            <span class="chip good" title="Takes effect when you save">Live</span>
+            {% endif %}
+            {% if row.overridden %}
+            <span class="chip alt" title="Differs from conf.json">Overridden</span>
+            {% endif %}
           </div>
-          {% endfor %}
+        </div>
 
-          <div class="setting-actions">
-            <button class="btn primary" type="submit">Save {{ section_title|lower }}</button>
-          </div>
-        </form>
+        <div class="setting-control">
+          {% if spec.kind == 'bool' %}
+          {# A switch, not a tickbox: one of these decides whether the service
+             emails real people. #}
+          <label class="switch">
+            <input type="checkbox" name="{{ spec.key }}" id="{{ spec.key }}"
+                   value="1" {{ 'checked' if row.value }}>
+            <span class="switch-text">{{ 'On' if row.value else 'Off' }}</span>
+          </label>
 
-        {# Outside the main form: nested forms are not valid HTML, and the
-           browser would silently drop the inner one. #}
-        {% for row in rows if row.differs_from_file %}
-        <form id="reset-{{ row.spec.key|replace('.', '-') }}" method="post"
-              action="/admin/settings/{{ section }}/reset" hidden>
-          <input type="hidden" name="key" value="{{ row.spec.key }}">
-        </form>
-        {% endfor %}
-      </div>
-    </div>
+          {% elif spec.kind == 'list' %}
+          <textarea name="{{ spec.key }}" id="{{ spec.key }}" rows="4"
+                    placeholder="{{ spec.placeholder }}">{{ spec.display(row.value) }}</textarea>
 
-    {% if history %}
-    <div class="card">
-      <div class="card-head">
-        <h2>Recent changes</h2>
-        <span class="sub">Across every section</span>
-      </div>
-      <div class="card-body flush">
-        <table class="data">
-          <thead>
-            <tr><th>When</th><th>Setting</th><th>From</th><th>To</th><th>Who</th></tr>
-          </thead>
-          <tbody>
-            {% for row in history %}
-            <tr>
-              <td class="tnum">{{ row.changed_at | localdt(with_zone=True) }}</td>
-              <td><code>{{ row.setting_key }}</code></td>
-              <td class="subtle">{{ row.old_value if row.old_value is not none else '(file value)' }}</td>
-              <td>{{ row.new_value if row.new_value is not none else '(reset to file)' }}</td>
-              <td class="subtle">{{ row.changed_by }}</td>
-            </tr>
+          {% elif spec.kind == 'choice' %}
+          <select name="{{ spec.key }}" id="{{ spec.key }}">
+            {% for choice in spec.choices %}
+            <option value="{{ choice }}" {{ 'selected' if choice == row.value }}>{{ choice }}</option>
             {% endfor %}
-          </tbody>
-        </table>
+          </select>
+
+          {% elif spec.kind in ('int', 'number') %}
+          <input type="number" name="{{ spec.key }}" id="{{ spec.key }}"
+                 value="{{ row.value if row.value is not none }}"
+                 {% if spec.kind == 'number' %}step="0.01"{% endif %}
+                 {% if spec.minimum is not none %}min="{{ spec.minimum }}"{% endif %}
+                 {% if spec.maximum is not none %}max="{{ spec.maximum }}"{% endif %}>
+
+          {% else %}
+          <input type="text" name="{{ spec.key }}" id="{{ spec.key }}"
+                 value="{{ row.value if row.value is not none }}"
+                 placeholder="{{ spec.placeholder }}">
+          {% endif %}
+
+          {% if spec.help %}<div class="subtle">{{ spec.help }}</div>{% endif %}
+          {% if spec.warning %}
+          <div class="setting-warning">{{ spec.warning }}</div>
+          {% endif %}
+
+          {#
+            Shown only where the database and the file disagree, which is the
+            one place somebody reading conf.json over SSH would otherwise
+            draw the wrong conclusion.
+
+            Keyed on the setting, not on loop.index - the reset forms below
+            are emitted only for overridden rows, so positional ids would
+            drift apart and the button would submit the wrong form.
+          #}
+          {% if row.differs_from_file %}
+          <div class="setting-file">
+            <span>conf.json says <code>{{ spec.display(row.file_value) or '(not set)' }}</code></span>
+            <button type="submit" class="linkish"
+                    form="reset-{{ spec.key|replace('.', '-') }}">Reset to the file value</button>
+          </div>
+          {% endif %}
+        </div>
       </div>
-    </div>
-    {% endif %}
+      {% endfor %}
+
+      <div class="setting-actions">
+        <button class="btn primary" type="submit">Save {{ section_title|lower }}</button>
+        <span class="subtle">Changes are recorded against your account.</span>
+      </div>
+    </form>
+
+    {# Outside the main form: nested forms are not valid HTML, and the
+       browser would silently drop the inner one. #}
+    {% for row in rows if row.differs_from_file %}
+    <form id="reset-{{ row.spec.key|replace('.', '-') }}" method="post"
+          action="/admin/settings/{{ section }}/reset" hidden>
+      <input type="hidden" name="key" value="{{ row.spec.key }}">
+    </form>
+    {% endfor %}
   </div>
 </div>
 
+{% if history %}
+<div class="card">
+  <div class="card-head">
+    <h2>Recent changes</h2>
+    <span class="sub">Across every section</span>
+  </div>
+  <div class="card-body flush">
+    <table class="data">
+      <thead>
+        <tr><th>When</th><th>Setting</th><th>From</th><th>To</th><th>Who</th></tr>
+      </thead>
+      <tbody>
+        {% for row in history %}
+        <tr>
+          <td class="tnum">{{ row.changed_at | localdt(with_zone=True) }}</td>
+          <td><code>{{ row.setting_key }}</code></td>
+          <td class="subtle">{{ row.old_value if row.old_value is not none else '(file value)' }}</td>
+          <td>{{ row.new_value if row.new_value is not none else '(reset to file)' }}</td>
+          <td class="subtle">{{ row.changed_by }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+  // The switch says On or Off beside itself. Without this it says whatever
+  // it said when the page loaded, which is wrong the moment it is clicked.
+  document.querySelectorAll('.switch input[type="checkbox"]').forEach(function (box) {
+    box.addEventListener('change', function () {
+      var text = box.parentNode.querySelector('.switch-text');
+      if (text) { text.textContent = box.checked ? 'On' : 'Off'; }
+    });
+  });
+</script>
 {% endblock %}

@@ -1,33 +1,30 @@
 {#
   Lead digest email.
 
-  Email clients strip <style> unpredictably and Outlook has no flexbox or grid,
-  so this is table-based with inline styles throughout. Light surface only -
-  an auto-inverted dark mode in email is unreliable, so the surfaces are
-  stated explicitly rather than left to the client.
+  Email clients strip <style> unpredictably and Outlook has no flexbox or
+  grid, so this is table-based with inline styles throughout. The palette is
+  supplied by the Jinja environment (delivery/dispatch.EMAIL_TOKENS) rather
+  than declared here, so five templates cannot drift apart.
 
-  Colour follows the documented status palette. Every severity colour is
-  paired with a written label, so nothing is carried by hue alone.
+  Light surfaces only, stated explicitly. Automatic dark-mode inversion in
+  email is unreliable and tends to produce a dark card with black text on it.
+
+  Every severity colour is paired with a written label. A digest gets
+  forwarded, printed and screenshotted, so hue alone is the least durable
+  channel available.
 #}
-{%- set INK = '#0b0b0b' -%}
-{%- set INK2 = '#52514e' -%}
-{%- set MUTED = '#898781' -%}
-{%- set SURFACE = '#fcfcfb' -%}
-{%- set PLANE = '#f9f9f7' -%}
-{%- set RULE = '#e1e0d9' -%}
-{%- set BORDER = '#c3c2b7' -%}
-{%- set CRITICAL = '#d03b3b' -%}
-{%- set SERIOUS = '#ec835a' -%}
-{%- set WARNING = '#fab219' -%}
-{%- set GOOD = '#0ca30c' -%}
-{%- set ACCENT = '#2a78d6' -%}
-{%- set FONT = "system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" -%}
-
 {%- macro severity_color(sev) -%}
 {%- if sev == 'critical' -%}{{ CRITICAL }}
 {%- elif sev == 'high' -%}{{ SERIOUS }}
 {%- elif sev == 'medium' -%}{{ WARNING }}
 {%- else -%}{{ GOOD }}{%- endif -%}
+{%- endmacro -%}
+
+{%- macro severity_tint(sev) -%}
+{%- if sev == 'critical' -%}{{ TINT_CRITICAL }}
+{%- elif sev == 'high' -%}{{ TINT_SERIOUS }}
+{%- elif sev == 'medium' -%}{{ TINT_WARNING }}
+{%- else -%}{{ TINT_GOOD }}{%- endif -%}
 {%- endmacro -%}
 
 {%- macro severity_label(sev) -%}
@@ -37,83 +34,106 @@
 {%- else -%}Low{%- endif -%}
 {%- endmacro -%}
 
+{#
+  A stat tile. The coloured rail down the left edge repeats what the value's
+  colour says, so the state survives a greyscale print - which is the normal
+  fate of a digest somebody takes into a stand-up.
+#}
 {%- macro stat_tile(label, value, note, color) -%}
-<td width="25%" valign="top" style="padding:0 6px 12px 0;">
+<td width="25%" valign="top" style="padding:0 8px 12px 0;">
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0"
-         style="background:{{ SURFACE }};border:1px solid {{ RULE }};border-radius:6px;">
-    <tr><td style="padding:12px 14px;">
-      <div style="font:400 12px/1.3 {{ FONT }};color:{{ INK2 }};">{{ label }}</div>
-      <div style="font:600 26px/1.25 {{ FONT }};color:{{ color or INK }};padding-top:2px;">{{ value }}</div>
-      {% if note %}<div style="font:400 11px/1.35 {{ FONT }};color:{{ MUTED }};padding-top:2px;">{{ note }}</div>{% endif %}
+         style="background:{{ SURFACE }};border:1px solid {{ RULE }};
+                border-left:3px solid {{ color or BORDER }};border-radius:{{ RADIUS }};">
+    <tr><td style="padding:13px 15px;">
+      <div style="font:500 12px/1.3 {{ FONT }};color:{{ INK2 }};">{{ label }}</div>
+      <div style="font:700 28px/1.2 {{ FONT }};color:{{ color or INK }};padding-top:4px;
+                  letter-spacing:-0.02em;">{{ value }}</div>
+      {% if note %}<div style="font:400 11px/1.4 {{ FONT }};color:{{ MUTED }};padding-top:3px;">{{ note }}</div>{% endif %}
     </td></tr>
   </table>
 </td>
 {%- endmacro -%}
 
+{%- macro pill(text, fg, bg) -%}
+<span style="display:inline-block;font:500 10.5px/1.6 {{ FONT }};
+             color:{{ fg or INK2 }};background:{{ bg or SUNKEN }};
+             border:1px solid {{ RULE }};border-radius:999px;
+             padding:1px 9px;margin:0 4px 4px 0;">{{ text }}</span>
+{%- endmacro -%}
+
 {%- macro ticket_row(row, reasons) -%}
 <tr>
-  <td style="padding:10px 8px;border-bottom:1px solid {{ RULE }};vertical-align:top;white-space:nowrap;">
-    <table role="presentation" cellpadding="0" cellspacing="0"><tr>
-      <td style="padding-right:6px;">
-        <div style="width:8px;height:8px;border-radius:2px;background:{{ severity_color(row.severity) }};"></div>
-      </td>
-      <td style="font:600 13px/1.3 {{ FONT }};color:{{ INK }};font-variant-numeric:tabular-nums;">
-        {% if row.url %}<a href="{{ row.url }}" style="color:{{ ACCENT }};text-decoration:none;">{{ row.incident_number }}</a>
-        {% else %}{{ row.incident_number }}{% endif %}
-      </td>
-    </tr></table>
-    <div style="font:400 11px/1.4 {{ FONT }};color:{{ MUTED }};padding-top:3px;">
+  {# The severity rail. A tinted 3px edge repeats what the dot and the
+     written label already say, and is the part that still works when the
+     message has been printed. #}
+  <td style="padding:0;border-bottom:1px solid {{ RULE }};
+             border-left:3px solid {{ severity_color(row.severity) }};
+             background:{{ severity_tint(row.severity) }};width:3px;"></td>
+
+  <td style="padding:12px 10px;border-bottom:1px solid {{ RULE }};vertical-align:top;white-space:nowrap;">
+    <div style="font:700 13.5px/1.3 {{ FONT }};font-variant-numeric:tabular-nums;">
+      {% if row.url %}<a href="{{ row.url }}" style="color:{{ ACCENT }};text-decoration:none;">{{ row.incident_number }}</a>
+      {% else %}<span style="color:{{ INK }};">{{ row.incident_number }}</span>{% endif %}
+    </div>
+    <div style="font:400 11px/1.4 {{ FONT }};color:{{ MUTED }};padding-top:4px;">
       {{ severity_label(row.severity) }} &middot; score {{ row.attention_score }}
     </div>
   </td>
 
-  <td style="padding:10px 8px;border-bottom:1px solid {{ RULE }};vertical-align:top;">
-    <div style="font:400 13px/1.4 {{ FONT }};color:{{ INK }};">
+  <td style="padding:12px 10px;border-bottom:1px solid {{ RULE }};vertical-align:top;">
+    <div style="font:400 13px/1.45 {{ FONT }};color:{{ INK }};">
       {{ (row.short_description or '(no description)')|truncate(78, true, '...') }}
     </div>
-    <div style="font:400 11px/1.4 {{ FONT }};color:{{ MUTED }};padding-top:3px;">
+    <div style="font:400 11px/1.4 {{ FONT }};color:{{ MUTED }};padding-top:4px;">
       {{ row.assigned_to or 'Unassigned' }}
       {%- if row.caller_name %} &middot; caller {{ row.caller_name }}{% endif %}
     </div>
     {% if row.flag_labels %}
-    <div style="padding-top:5px;">
+    <div style="padding-top:6px;">
       {% for flag in row.flag_labels[:4] %}
-      <span style="display:inline-block;font:400 10px/1.5 {{ FONT }};color:{{ INK2 }};
-                   background:{{ PLANE }};border:1px solid {{ RULE }};border-radius:3px;
-                   padding:1px 6px;margin:0 4px 3px 0;">{{ flag }}</span>
+      {% if flag in ('SLA breached', 'Prolonged inactivity') %}
+      {{ pill(flag, INK, TINT_CRITICAL) }}
+      {% else %}
+      {{ pill(flag) }}
+      {% endif %}
       {% endfor %}
     </div>
     {% endif %}
   </td>
 
-  <td style="padding:10px 8px;border-bottom:1px solid {{ RULE }};vertical-align:top;white-space:nowrap;
-             font:400 12px/1.4 {{ FONT }};color:{{ INK2 }};font-variant-numeric:tabular-nums;">
+  <td style="padding:12px 10px;border-bottom:1px solid {{ RULE }};vertical-align:top;white-space:nowrap;
+             font:400 12px/1.5 {{ FONT }};color:{{ INK2 }};font-variant-numeric:tabular-nums;">
     {{ row.age_display }}<br>
     <span style="color:{{ MUTED }};">idle {{ row.idle_display }}</span>
   </td>
 
-  <td style="padding:10px 8px;border-bottom:1px solid {{ RULE }};vertical-align:top;white-space:nowrap;
-             font:600 12px/1.4 {{ FONT }};color:{{ INK }};">
+  <td style="padding:12px 10px;border-bottom:1px solid {{ RULE }};vertical-align:top;white-space:nowrap;
+             font:600 12px/1.5 {{ FONT }};color:{{ INK }};">
     {{ row.pending_action_owner_label }}
   </td>
 
-  <td style="padding:10px 8px;border-bottom:1px solid {{ RULE }};vertical-align:top;">
-    <div style="font:600 12px/1.4 {{ FONT }};color:{{ INK }};">{{ row.action_label }}</div>
+  <td style="padding:12px 10px;border-bottom:1px solid {{ RULE }};vertical-align:top;">
+    <div style="font:650 12.5px/1.45 {{ FONT }};color:{{ INK }};">{{ row.action_label }}</div>
     {% if row.suggested_target_group %}
-    <div style="font:400 11px/1.4 {{ FONT }};color:{{ INK2 }};padding-top:2px;">
+    <div style="font:400 11px/1.4 {{ FONT }};color:{{ INK2 }};padding-top:3px;">
       to {{ row.suggested_target_group }}
     </div>
     {% endif %}
     {% if row.rationale %}
-    <div style="font:400 11px/1.45 {{ FONT }};color:{{ INK2 }};padding-top:3px;">
+    <div style="font:400 11px/1.5 {{ FONT }};color:{{ INK2 }};padding-top:4px;">
       {{ row.rationale|truncate(150, true, '...') }}
     </div>
     {% endif %}
-    <div style="font:400 10px/1.4 {{ FONT }};color:{{ MUTED }};padding-top:3px;">
-      {% if row.low_confidence %}Requires review &middot; {% endif %}confidence {{ row.confidence_pct }}%
-      {%- set why = reasons.get(row.incident_number) %}
-      {%- if why %} &middot; ranked for {{ why|join(', ') }}{% endif %}
+    <div style="padding-top:6px;">
+      {% if row.low_confidence %}{{ pill('Requires review', INK, TINT_WARNING) }}{% endif %}
+      {{ pill(row.confidence_pct ~ '% confidence') }}
     </div>
+    {%- set why = reasons.get(row.incident_number) %}
+    {%- if why %}
+    <div style="font:400 10.5px/1.45 {{ FONT }};color:{{ MUTED }};padding-top:2px;">
+      Ranked for {{ why|join(', ') }}
+    </div>
+    {% endif %}
   </td>
 </tr>
 {%- endmacro -%}
@@ -125,28 +145,40 @@
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:{{ PLANE }};">
 <tr><td align="center" style="padding:20px 12px;">
 <table role="presentation" width="720" cellpadding="0" cellspacing="0"
-       style="width:720px;max-width:100%;background:{{ SURFACE }};border:1px solid {{ RULE }};border-radius:8px;">
+       style="width:720px;max-width:100%;background:{{ SURFACE }};border:1px solid {{ RULE }};
+              border-radius:{{ RADIUS }};overflow:hidden;">
 
-  <!-- Header -->
-  <tr><td style="padding:20px 20px 12px 20px;border-bottom:1px solid {{ RULE }};">
-    <div style="font:600 18px/1.3 {{ FONT }};color:{{ INK }};">Aged pending ticket review</div>
-    <div style="font:400 12px/1.5 {{ FONT }};color:{{ INK2 }};padding-top:4px;">
-      {{ groups|join(', ') if groups else 'All groups' }}
-      &middot; tickets open more than {{ aged_after_days }} days
+  <!-- Header. A solid band so the queue name is the first thing read: a
+       lead over three queues receives three of these. -->
+  <tr><td style="padding:22px 24px 20px 24px;background:{{ INK }};">
+    <div style="font:700 19px/1.25 {{ FONT }};color:#ffffff;letter-spacing:-0.02em;">
+      Aged pending ticket review
+    </div>
+    <div style="font:400 12.5px/1.6 {{ FONT }};color:#b9b8b1;padding-top:6px;">
+      <span style="color:#ffffff;font-weight:600;">{{ groups|join(', ') if groups else 'All groups' }}</span><br>
+      Open more than {{ aged_after_days }} days
       &middot; generated {{ generated_at | datefmt('%a %d %b %Y, %H:%M') }} {{ display_tz_abbrev }}
     </div>
-    {% if shadow_mode %}
-    <div style="margin-top:10px;padding:7px 10px;background:{{ PLANE }};border-left:3px solid {{ WARNING }};
-                font:400 11px/1.45 {{ FONT }};color:{{ INK2 }};">
-      <strong style="color:{{ INK }};">Shadow mode.</strong>
-      Recommendations are being recorded for accuracy measurement and are not yet
-      part of the official process. Please review and mark whether you agree.
-    </div>
-    {% endif %}
   </td></tr>
 
+  {% if shadow_mode %}
+  <tr><td style="padding:0;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0"
+           style="background:{{ TINT_WARNING }};border-bottom:1px solid {{ RULE }};">
+      <tr>
+        <td style="width:3px;background:{{ WARNING }};"></td>
+        <td style="padding:11px 21px;font:400 11.5px/1.55 {{ FONT }};color:{{ INK2 }};">
+          <strong style="color:{{ INK }};">Shadow mode.</strong>
+          Recommendations are being recorded for accuracy measurement and are not
+          yet part of the official process. Please review and mark whether you agree.
+        </td>
+      </tr>
+    </table>
+  </td></tr>
+  {% endif %}
+
   <!-- Stat tiles -->
-  <tr><td style="padding:16px 14px 4px 20px;">
+  <tr><td style="padding:20px 16px 4px 24px;">
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>
       {{ stat_tile('Aged tickets', summary.total, 'in scope today', INK) }}
       {{ stat_tile('Awaiting ' ~ team_label|lower, summary.team_owned, 'remainder are awaiting other parties', (CRITICAL if summary.team_owned else GOOD)) }}
@@ -189,10 +221,13 @@
 
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;">
       <tr>
+        {# A blank first heading over the severity rail - the rail is 3px of
+           colour, not a column of data, so labelling it would be noise. #}
+        <th style="padding:0;border-bottom:1px solid {{ BORDER }};width:3px;"></th>
         {% for heading in ['Incident', 'Summary', 'Age', 'Pending action owner', 'Suggested next step'] %}
-        <th align="left" style="padding:0 8px 6px 8px;border-bottom:1px solid {{ BORDER }};
-                                font:600 11px/1.3 {{ FONT }};color:{{ MUTED }};
-                                text-transform:uppercase;letter-spacing:.04em;">{{ heading }}</th>
+        <th align="left" style="padding:0 10px 8px 10px;border-bottom:1px solid {{ BORDER }};
+                                font:700 10.5px/1.3 {{ FONT }};color:{{ MUTED }};
+                                text-transform:uppercase;letter-spacing:.055em;">{{ heading }}</th>
         {% endfor %}
       </tr>
       {% for row in tickets %}{{ ticket_row(row, reasons) }}{% endfor %}
@@ -260,10 +295,15 @@
           {{ value }}
         </td>
         {% endfor %}
+        {# A low average gets a tinted pill rather than recoloured digits.
+           Coloured text is the one status cue that cannot be reinforced by
+           shape, and it is the first to fail in a printed copy. #}
         <td align="right" style="padding:7px 8px;border-bottom:1px solid {{ RULE }};
                                  font:400 12px/1.4 {{ FONT }};font-variant-numeric:tabular-nums;
-                                 color:{{ (CRITICAL if entry.compliance and entry.compliance.avg_score < 60 else INK2) }};">
-          {% if entry.compliance %}{{ entry.compliance.avg_score }}%{% else %}&mdash;{% endif %}
+                                 color:{{ INK2 }};">
+          {% if not entry.compliance %}&mdash;
+          {% elif entry.compliance.avg_score < 60 %}{{ pill(entry.compliance.avg_score ~ '% low', INK, TINT_CRITICAL) }}
+          {% else %}{{ entry.compliance.avg_score }}%{% endif %}
         </td>
       </tr>
       {% endfor %}
@@ -271,26 +311,35 @@
   </td></tr>
   {% endif %}
 
-  <!-- Footer -->
-  <tr><td style="padding:18px 20px 20px 20px;">
-    {% if base_url %}
+  <!-- Call to action. A deep link, never an action: mail scanners fetch
+       URLs found in email to inspect them, so anything that acted on GET
+       would act within seconds of sending, attributed to nobody. -->
+  {% if base_url %}
+  <tr><td style="padding:24px 24px 4px 24px;">
     <table role="presentation" cellpadding="0" cellspacing="0"><tr><td
-        style="background:{{ ACCENT }};border-radius:5px;">
+        style="background:{{ ACCENT }};border-radius:8px;">
       <a href="{{ base_url }}/board"
-         style="display:inline-block;padding:9px 18px;font:600 13px/1 {{ FONT }};
-                color:#ffffff;text-decoration:none;">Open the review board</a>
+         style="display:inline-block;padding:12px 24px;font:650 13.5px/1 {{ FONT }};
+                color:#ffffff;text-decoration:none;">Open the review board &rarr;</a>
     </td></tr></table>
-    {% endif %}
-    <div style="font:400 11px/1.6 {{ FONT }};color:{{ MUTED }};padding-top:14px;
-                border-top:1px solid {{ RULE }};margin-top:14px;">
-      Suggestions are advisory and were generated from ticket history, SLA state, past
-      resolved incidents and knowledge articles. Nothing has been changed in ServiceNow.
-      Marking whether you agree on the board is what tunes the accuracy.
-      <div style="padding-top:8px;">
-        All times shown are <strong>{{ display_tz_label }}</strong>.
-        The board can be switched to your own timezone from the menu bar.
-      </div>
-    </div>
+  </td></tr>
+  {% endif %}
+
+  <!-- Footer -->
+  <tr><td style="padding:22px 24px 24px 24px;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0"
+           style="background:{{ SUNKEN }};border:1px solid {{ RULE }};border-radius:{{ RADIUS }};">
+      <tr><td style="padding:14px 16px;font:400 11.5px/1.65 {{ FONT }};color:{{ MUTED }};">
+        Suggestions are advisory and were generated from ticket history, SLA state, past
+        resolved incidents and knowledge articles. <strong style="color:{{ INK2 }};">Nothing
+        has been changed in ServiceNow.</strong> Marking whether you agree on the board is
+        what tunes the accuracy.
+        <div style="padding-top:9px;">
+          All times shown are <strong style="color:{{ INK2 }};">{{ display_tz_label }}</strong>.
+          The board can be switched to your own timezone from the menu bar.
+        </div>
+      </td></tr>
+    </table>
   </td></tr>
 
 </table>

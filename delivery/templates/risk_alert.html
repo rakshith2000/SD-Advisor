@@ -3,25 +3,17 @@
   Deliberately short - this is an interrupt, so it earns its place by being
   scannable in five seconds.
 #}
-{%- set INK = '#0b0b0b' -%}
-{%- set INK2 = '#52514e' -%}
-{%- set MUTED = '#898781' -%}
-{%- set SURFACE = '#fcfcfb' -%}
-{%- set PLANE = '#f9f9f7' -%}
-{%- set RULE = '#e1e0d9' -%}
-{%- set CRITICAL = '#d03b3b' -%}
-{%- set SERIOUS = '#ec835a' -%}
-{%- set WARNING = '#fab219' -%}
-{%- set GOOD = '#0ca30c' -%}
-{%- set ACCENT = '#2a78d6' -%}
-{%- set FONT = "system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" -%}
-
+{#
+  The palette comes from the Jinja environment (delivery/dispatch
+  EMAIL_TOKENS) rather than being declared per template, so five messages
+  cannot drift apart.
+#}
 {%- set ALERT_META = {
-  'SLA_BREACHED':          ('SLA breached',            CRITICAL),
-  'SLA_AT_RISK':          ('SLA about to breach',     SERIOUS),
-  'PROLONGED_INACTIVITY':      ('No action for 4+ days',   SERIOUS),
-  'CALLER_AWAITING_REPLY': ('Caller awaiting a reply', WARNING),
-  'DEPENDENCY_CLEARED':    ('Dependency has closed',   ACCENT)
+  'SLA_BREACHED':          ('SLA breached',            CRITICAL, TINT_CRITICAL),
+  'SLA_AT_RISK':           ('SLA about to breach',     SERIOUS,  TINT_SERIOUS),
+  'PROLONGED_INACTIVITY':  ('No action for 4+ days',   SERIOUS,  TINT_SERIOUS),
+  'CALLER_AWAITING_REPLY': ('Caller awaiting a reply', WARNING,  TINT_WARNING),
+  'DEPENDENCY_CLEARED':    ('Dependency has closed',   ACCENT,   ACCENT_SOFT)
 } -%}
 
 <!DOCTYPE html>
@@ -29,18 +21,19 @@
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
 <body style="margin:0;padding:0;background:{{ PLANE }};">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:{{ PLANE }};">
-<tr><td align="center" style="padding:20px 12px;">
+<tr><td align="center" style="padding:24px 12px;">
 <table role="presentation" width="660" cellpadding="0" cellspacing="0"
-       style="width:660px;max-width:100%;background:{{ SURFACE }};border:1px solid {{ RULE }};border-radius:8px;">
+       style="width:660px;max-width:100%;background:{{ SURFACE }};border:1px solid {{ RULE }};
+              border-radius:{{ RADIUS }};overflow:hidden;">
 
-  <tr><td style="padding:18px 20px 12px 20px;border-bottom:1px solid {{ RULE }};">
-    <div style="font:600 16px/1.3 {{ FONT }};color:{{ INK }};">
+  <tr><td style="padding:20px 24px;background:{{ INK }};">
+    <div style="font:700 17px/1.25 {{ FONT }};color:#ffffff;letter-spacing:-0.018em;">
       {{ alerts|length }} new risk alert{{ 's' if alerts|length != 1 }}
     </div>
-    <div style="font:400 12px/1.5 {{ FONT }};color:{{ INK2 }};padding-top:3px;">
+    <div style="font:400 12.5px/1.6 {{ FONT }};color:#b9b8b1;padding-top:5px;">
       {# One mail per assignment group, so saying which one is not decoration:
          a lead covering three queues receives three of these. #}
-      {% if group %}{{ group }} &middot; {% endif %}detected
+      {% if group %}<span style="color:#ffffff;font-weight:600;">{{ group }}</span> &middot; {% endif %}detected
       {{ generated_at | datefmt('%H:%M on %a %d %b') }} {{ display_tz_abbrev }}.
       Each ticket alerts once per day.
     </div>

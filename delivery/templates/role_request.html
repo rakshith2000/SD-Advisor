@@ -8,53 +8,48 @@
   nobody. This link opens a page; the grant is a POST from an authenticated
   administrator's session.
 #}
-{%- set INK = '#0b0b0b' -%}
-{%- set INK2 = '#52514e' -%}
-{%- set MUTED = '#898781' -%}
-{%- set SURFACE = '#fcfcfb' -%}
-{%- set PLANE = '#f9f9f7' -%}
-{%- set RULE = '#e1e0d9' -%}
-{%- set WARNING = '#fab219' -%}
-{%- set ACCENT = '#2a78d6' -%}
-{%- set FONT = "system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" -%}
+{#
+  The palette comes from the Jinja environment (delivery/dispatch
+  EMAIL_TOKENS) rather than being declared here, so five templates cannot
+  drift apart.
+#}
+{%- macro detail(label, value) -%}
+<tr>
+  <td style="width:150px;padding:5px 0;color:{{ MUTED }};vertical-align:top;
+             font:400 12.5px/1.6 {{ FONT }};">{{ label }}</td>
+  <td style="padding:5px 0;font:400 13px/1.6 {{ FONT }};color:{{ INK }};">{{ value }}</td>
+</tr>
+{%- endmacro -%}
 
 <!DOCTYPE html>
 <html lang="en">
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
 <body style="margin:0;padding:0;background:{{ PLANE }};">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:{{ PLANE }};">
-<tr><td align="center" style="padding:20px 12px;">
+<tr><td align="center" style="padding:24px 12px;">
 <table role="presentation" width="620" cellpadding="0" cellspacing="0"
-       style="width:620px;max-width:100%;background:{{ SURFACE }};border:1px solid {{ RULE }};border-radius:8px;">
+       style="width:620px;max-width:100%;background:{{ SURFACE }};border:1px solid {{ RULE }};
+              border-radius:{{ RADIUS }};overflow:hidden;">
 
-  <tr><td style="padding:18px 20px 12px 20px;border-bottom:1px solid {{ RULE }};">
-    <div style="font:600 16px/1.3 {{ FONT }};color:{{ INK }};">
+  <tr><td style="padding:22px 24px 20px 24px;background:{{ INK }};">
+    <div style="font:700 17px/1.25 {{ FONT }};color:#ffffff;letter-spacing:-0.018em;">
       Access request awaiting a decision
     </div>
-    <div style="font:400 12px/1.5 {{ FONT }};color:{{ INK2 }};padding-top:3px;">
-      {{ request.full_name or request.username }} has asked for the
-      {{ request.to_role|title }} role.
+    <div style="font:400 12.5px/1.6 {{ FONT }};color:#b9b8b1;padding-top:5px;">
+      <span style="color:#ffffff;font-weight:600;">{{ request.full_name or request.username }}</span>
+      has asked for the {{ request.to_role|title }} role.
       Sent to every administrator &mdash; only one of you needs to act.
     </div>
   </td></tr>
 
-  <tr><td style="padding:14px 20px;border-bottom:1px solid {{ RULE }};">
-    <table role="presentation" width="100%" cellpadding="0" cellspacing="0"
-           style="font:400 13px/1.6 {{ FONT }};color:{{ INK }};">
+  <tr><td style="padding:18px 24px 6px 24px;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+      {{ detail('Who', (request.full_name or request.username) ~ ' (' ~ request.username ~ ')') }}
+      {% if request.email %}{{ detail('Email', request.email) }}{% endif %}
       <tr>
-        <td style="width:150px;color:{{ MUTED }};vertical-align:top;">Who</td>
-        <td>{{ request.full_name or request.username }}
-          <span style="color:{{ MUTED }};">({{ request.username }})</span></td>
-      </tr>
-      {% if request.email %}
-      <tr>
-        <td style="color:{{ MUTED }};vertical-align:top;">Email</td>
-        <td>{{ request.email }}</td>
-      </tr>
-      {% endif %}
-      <tr>
-        <td style="color:{{ MUTED }};vertical-align:top;">Change</td>
-        <td>
+        <td style="width:150px;padding:5px 0;color:{{ MUTED }};vertical-align:top;
+                   font:400 12.5px/1.6 {{ FONT }};">Change</td>
+        <td style="padding:5px 0;font:400 13px/1.6 {{ FONT }};color:{{ INK }};">
           {% if request.is_additive %}
           <strong>{{ request.to_role|title }}</strong> &mdash; already held,
           no change of role
@@ -63,27 +58,23 @@
           {% endif %}
         </td>
       </tr>
-      <tr>
-        <td style="color:{{ MUTED }};vertical-align:top;">
-          {{ 'Queues to add' if request.is_additive else 'Queues requested' }}</td>
-        <td>{{ request.requested_groups or 'None specified' }}</td>
-      </tr>
-      <tr>
-        <td style="color:{{ MUTED }};vertical-align:top;">Raised</td>
-        <td>{{ request.created_at|datefmt('%d %b %Y %H:%M') }} {{ display_tz_abbrev }}</td>
-      </tr>
-      <tr>
-        <td style="color:{{ MUTED }};vertical-align:top;">Expires</td>
-        <td>{{ request.expires_at|datefmt('%d %b %Y') }} if nobody decides</td>
-      </tr>
+      {{ detail('Queues to add' if request.is_additive else 'Queues requested',
+                request.requested_groups or 'None specified') }}
+      {{ detail('Raised', request.created_at|datefmt('%d %b %Y %H:%M') ~ ' ' ~ display_tz_abbrev) }}
+      {{ detail('Expires', request.expires_at|datefmt('%d %b %Y') ~ ' if nobody decides') }}
     </table>
   </td></tr>
 
-  <tr><td style="padding:14px 20px;border-bottom:1px solid {{ RULE }};">
-    <div style="font:600 12px/1.4 {{ FONT }};color:{{ MUTED }};
-                text-transform:uppercase;letter-spacing:0.04em;">Their reason</div>
-    <div style="font:400 13px/1.6 {{ FONT }};color:{{ INK }};padding-top:5px;
-                white-space:pre-wrap;">{{ request.justification }}</div>
+  <tr><td style="padding:12px 24px 0 24px;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0"
+           style="background:{{ SUNKEN }};border:1px solid {{ RULE }};border-radius:{{ RADIUS }};">
+      <tr><td style="padding:13px 16px;">
+        <div style="font:700 10.5px/1.4 {{ FONT }};color:{{ MUTED }};
+                    text-transform:uppercase;letter-spacing:.055em;">Their reason</div>
+        <div style="font:400 13px/1.65 {{ FONT }};color:{{ INK }};padding-top:6px;
+                    white-space:pre-wrap;">{{ request.justification }}</div>
+      </td></tr>
+    </table>
   </td></tr>
 
   {#
@@ -91,32 +82,40 @@
     on role IN ('ADMIN','LEAD'), so granting Lead also starts delivering mail
     that carries incident descriptions and caller names.
   #}
-  <tr><td style="padding:12px 20px;border-bottom:1px solid {{ RULE }};
-                 background:#fffaf0;">
-    <div style="font:400 12px/1.6 {{ FONT }};color:{{ INK2 }};">
-      <strong style="color:{{ WARNING }};">Note.</strong>
-      Approving adds {{ request.email or 'this account' }} to the daily lead
-      digest and to risk alerts for the queues you grant. Those messages
-      contain incident descriptions and caller names.
-    </div>
+  <tr><td style="padding:12px 24px 0 24px;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0"
+           style="background:{{ TINT_WARNING }};border-radius:{{ RADIUS }};">
+      <tr>
+        <td style="width:3px;background:{{ WARNING }};border-radius:{{ RADIUS }} 0 0 {{ RADIUS }};"></td>
+        <td style="padding:12px 15px;font:400 12px/1.6 {{ FONT }};color:{{ INK2 }};">
+          <strong style="color:{{ INK }};">Approving also subscribes them to mail.</strong>
+          {{ request.email or 'This account' }} will start receiving the daily
+          lead digest and risk alerts for the queues you grant. Those messages
+          contain incident descriptions and caller names.
+        </td>
+      </tr>
+    </table>
   </td></tr>
 
-  <tr><td style="padding:16px 20px 20px 20px;">
-    {% if base_url %}
+  {% if base_url %}
+  <tr><td style="padding:20px 24px 4px 24px;">
     <table role="presentation" cellpadding="0" cellspacing="0"><tr>
-      <td style="background:{{ ACCENT }};border-radius:5px;">
+      <td style="background:{{ ACCENT }};border-radius:8px;">
         <a href="{{ base_url }}/admin/role-requests/{{ request.id }}"
-           style="display:inline-block;padding:9px 18px;font:600 12px/1 {{ FONT }};
-                  color:#ffffff;text-decoration:none;">Review this request</a>
+           style="display:inline-block;padding:12px 24px;font:650 13.5px/1 {{ FONT }};
+                  color:#ffffff;text-decoration:none;">Review this request &rarr;</a>
       </td>
     </tr></table>
-    {% endif %}
-    <div style="font:400 11px/1.6 {{ FONT }};color:{{ MUTED }};padding-top:12px;">
+  </td></tr>
+  {% endif %}
+
+  <tr><td style="padding:18px 24px 24px 24px;">
+    <div style="font:400 11.5px/1.65 {{ FONT }};color:{{ MUTED }};">
       {% if shadow_mode %}Shadow mode is on for digests; this notification is sent
       regardless so the request is not left unseen. {% endif %}
       Opening the link shows the request &mdash; approving or declining is a
-      separate click once you are signed in. Nothing is decided by following
-      this link.
+      separate click once you are signed in.
+      <strong style="color:{{ INK2 }};">Nothing is decided by following this link.</strong>
     </div>
   </td></tr>
 

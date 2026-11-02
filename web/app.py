@@ -960,15 +960,15 @@ def create_app(config_path: Optional[str] = None) -> FastAPI:
     def admin_settings_page(request: Request, section: str = 'review',
                             saved: str = '', error: str = '',
                             user: Dict[str, Any] = Depends(require_admin)):
-        known = [key for key, _label, _blurb in SECTIONS]
-        if section not in known:
-            section = known[0]
+        if section not in admin_settings.SECTION_KEYS:
+            section = admin_settings.SECTION_KEYS[0]
 
-        title = next(label for key, label, _b in SECTIONS if key == section)
-        blurb = next(b for key, _l, b in SECTIONS if key == section)
+        title = next(label for key, label, _b, _i in SECTIONS if key == section)
+        blurb = next(b for key, _l, b, _i in SECTIONS if key == section)
 
         return render(request, 'admin_settings.html',
-                      sections=SECTIONS, section=section,
+                      sections=admin_settings.section_summaries(ctx.settings, section),
+                      section=section,
                       section_title=title, section_blurb=blurb,
                       rows=admin_settings.rows_for(ctx.settings, section),
                       restart_pending=admin_settings.restart_pending(ctx.settings),

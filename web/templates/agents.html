@@ -52,37 +52,47 @@
           <td class="num">
             <div class="sev sev-{{ 'critical' if entry.max_score >= 70
                                    else 'high' if entry.max_score >= 45
-                                   else 'medium' if entry.max_score >= 25 else 'low' }}"
-                 style="justify-content:flex-end;">
+                                   else 'medium' if entry.max_score >= 25 else 'low' }} sev-right">
               <span class="sev-dot" aria-hidden="true"></span>
               <strong class="tnum">{{ entry.max_score }}</strong>
             </div>
           </td>
           <td class="tnum">{{ entry.avg_idle_display }}</td>
-          <td class="num" style="{{ 'color:var(--status-critical);font-weight:600;' if entry.sla_breached }}">
-            {{ entry.sla_breached }}
+          {#
+            A count that matters is marked with a tinted pill, not by
+            recolouring the digits. Coloured text is the one place a status
+            hue cannot be reinforced by shape, and a light hue on the surface
+            is the first thing to fail on a projector or in greyscale.
+          #}
+          <td class="num">
+            {% if entry.sla_breached %}
+            <span class="chip alert">{{ entry.sla_breached }} breached</span>
+            {% else %}0{% endif %}
           </td>
-          <td class="num" style="{{ 'color:var(--status-serious);font-weight:600;' if entry.prolonged_inactivity }}">
-            {{ entry.prolonged_inactivity }}
+          <td class="num">
+            {% if entry.prolonged_inactivity %}
+            <span class="chip warn">{{ entry.prolonged_inactivity }} stalled</span>
+            {% else %}0{% endif %}
           </td>
           <td class="num">{{ entry.caller_awaiting }}</td>
           <td class="num">{{ entry.kb_gaps }}</td>
           {% if has_compliance %}
           <td class="num">
             {% if entry.compliance %}
-            <span style="{{ 'color:var(--status-critical);font-weight:600;'
-                            if entry.compliance.avg_score < 60 }}">
-              {{ entry.compliance.avg_score }}%
-            </span>
+            {% if entry.compliance.avg_score < 60 %}
+            <span class="chip alert">{{ entry.compliance.avg_score }}% low</span>
+            {% else %}
+            <span class="tnum">{{ entry.compliance.avg_score }}%</span>
+            {% endif %}
             <div class="subtle">{{ entry.compliance.audited }} audited</div>
             {% else %}
             <span class="subtle">&mdash;</span>
             {% endif %}
           </td>
           {% endif %}
-          <td style="max-width:280px;">
+          <td class="cell-wide">
             {% for ticket in entry.tickets[:3] %}
-            <div style="margin-bottom:3px;">
+            <div class="stacked-line">
               <a class="ticket-id" href="/ticket/{{ ticket.incident_number }}">{{ ticket.incident_number }}</a>
               <span class="subtle">{{ (ticket.short_description or '')|truncate(38, true, '...') }}</span>
             </div>

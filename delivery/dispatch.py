@@ -25,6 +25,47 @@ log = get_logger('delivery.dispatch')
 
 TEMPLATE_DIR = Path(__file__).resolve().parent / 'templates'
 
+# The mail palette, in one place rather than redeclared at the top of five
+# templates. Email clients strip <style> unpredictably and Outlook has no
+# flexbox or grid, so every message is a table with inline styles - which
+# means the colours have to be substituted in, and five copies of a palette
+# is five chances for one of them to drift.
+#
+# Light surfaces only, stated explicitly. Automatic dark-mode inversion in
+# email is unreliable across clients and tends to produce a dark card with
+# black text on it; naming the surface is the reliable outcome.
+EMAIL_TOKENS = {
+    'INK': '#111110',
+    'INK2': '#56554f',
+    'MUTED': '#8a8880',
+    'SURFACE': '#ffffff',
+    'SUNKEN': '#f6f6f3',
+    'PLANE': '#eeeeea',
+    'RULE': '#e5e4dd',
+    'BORDER': '#c9c8bd',
+
+    'ACCENT': '#2a78d6',
+    'ACCENT_SOFT': '#e4eefc',
+
+    # Reserved. Every one of these is paired with a written label wherever it
+    # appears, so nothing in a digest is carried by hue alone - which matters
+    # more in email than on the board, because a forwarded screenshot and a
+    # printed copy are both normal.
+    'CRITICAL': '#c62f2f',
+    'SERIOUS': '#d1600f',
+    'WARNING': '#b87b07',
+    'GOOD': '#0b8c45',
+
+    'TINT_CRITICAL': '#fae8e8',
+    'TINT_SERIOUS': '#fbe9dc',
+    'TINT_WARNING': '#fbf0da',
+    'TINT_GOOD': '#e6f4ec',
+
+    'FONT': ("-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, "
+             "Helvetica, Arial, sans-serif"),
+    'RADIUS': '10px',
+}
+
 
 def build_environment(settings=None) -> Environment:
     """Jinja environment for the outbound mail templates.
@@ -53,6 +94,7 @@ def build_environment(settings=None) -> Environment:
     env.filters['datefmt'] = lambda value, f=None: format_dt(value, zone, f or fmt)
     env.filters['localdt'] = env.filters['datefmt']
 
+    env.globals.update(EMAIL_TOKENS)
     env.globals.update({
         'display_tz': zone,
         'display_tz_label': zone_label(zone),

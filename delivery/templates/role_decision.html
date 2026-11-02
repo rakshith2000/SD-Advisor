@@ -5,16 +5,11 @@
   nobody having looked yet - and the only way to find out would be to log in
   repeatedly and check.
 #}
-{%- set INK = '#0b0b0b' -%}
-{%- set INK2 = '#52514e' -%}
-{%- set MUTED = '#898781' -%}
-{%- set SURFACE = '#fcfcfb' -%}
-{%- set PLANE = '#f9f9f7' -%}
-{%- set RULE = '#e1e0d9' -%}
-{%- set GOOD = '#0ca30c' -%}
-{%- set CRITICAL = '#d03b3b' -%}
-{%- set ACCENT = '#2a78d6' -%}
-{%- set FONT = "system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" -%}
+{#
+  The palette comes from the Jinja environment (delivery/dispatch
+  EMAIL_TOKENS) rather than being declared here, so five templates cannot
+  drift apart.
+#}
 {%- set approved = request.status == 'APPROVED' -%}
 
 <!DOCTYPE html>
@@ -22,15 +17,20 @@
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
 <body style="margin:0;padding:0;background:{{ PLANE }};">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:{{ PLANE }};">
-<tr><td align="center" style="padding:20px 12px;">
+<tr><td align="center" style="padding:24px 12px;">
 <table role="presentation" width="620" cellpadding="0" cellspacing="0"
-       style="width:620px;max-width:100%;background:{{ SURFACE }};border:1px solid {{ RULE }};border-radius:8px;">
+       style="width:620px;max-width:100%;background:{{ SURFACE }};border:1px solid {{ RULE }};
+              border-radius:{{ RADIUS }};overflow:hidden;">
 
-  <tr><td style="padding:18px 20px 12px 20px;border-bottom:1px solid {{ RULE }};">
-    <div style="font:600 16px/1.3 {{ FONT }};color:{{ GOOD if approved else CRITICAL }};">
+  {# The outcome word carries the result, not the colour. A tinted band
+     reinforces it; neither is load-bearing on its own. #}
+  <tr><td style="padding:22px 24px 20px 24px;
+                 background:{{ TINT_GOOD if approved else TINT_CRITICAL }};
+                 border-bottom:1px solid {{ RULE }};">
+    <div style="font:700 17px/1.3 {{ FONT }};color:{{ INK }};letter-spacing:-0.018em;">
       Your access request was {{ 'approved' if approved else 'declined' }}
     </div>
-    <div style="font:400 12px/1.5 {{ FONT }};color:{{ INK2 }};padding-top:3px;">
+    <div style="font:400 12.5px/1.6 {{ FONT }};color:{{ INK2 }};padding-top:5px;">
       {{ request.from_role|title }} &rarr; {{ request.to_role|title }},
       decided {{ request.decided_at|datefmt('%d %b %Y %H:%M') }} {{ display_tz_abbrev }}
       {%- if request.decided_by %} by {{ request.decided_by }}{% endif %}.
@@ -38,16 +38,19 @@
   </td></tr>
 
   {% if approved %}
-  <tr><td style="padding:14px 20px;border-bottom:1px solid {{ RULE }};">
-    <table role="presentation" width="100%" cellpadding="0" cellspacing="0"
-           style="font:400 13px/1.6 {{ FONT }};color:{{ INK }};">
+  <tr><td style="padding:18px 24px 6px 24px;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
       <tr>
-        <td style="width:150px;color:{{ MUTED }};vertical-align:top;">Role</td>
-        <td><strong>{{ request.to_role|title }}</strong></td>
+        <td style="width:150px;padding:5px 0;color:{{ MUTED }};vertical-align:top;
+                   font:400 12.5px/1.6 {{ FONT }};">Role</td>
+        <td style="padding:5px 0;font:400 13px/1.6 {{ FONT }};color:{{ INK }};">
+          <strong>{{ request.to_role|title }}</strong></td>
       </tr>
       <tr>
-        <td style="color:{{ MUTED }};vertical-align:top;">Queues granted</td>
-        <td>{{ request.granted_groups or 'None' }}</td>
+        <td style="padding:5px 0;color:{{ MUTED }};vertical-align:top;
+                   font:400 12.5px/1.6 {{ FONT }};">Queues granted</td>
+        <td style="padding:5px 0;font:400 13px/1.6 {{ FONT }};color:{{ INK }};">
+          {{ request.granted_groups or 'None' }}</td>
       </tr>
       {#
         Shown whenever it differs from what this request added - which is the
@@ -57,14 +60,16 @@
       {% if request.effective_groups
             and request.effective_groups != request.granted_groups %}
       <tr>
-        <td style="color:{{ MUTED }};vertical-align:top;">You can now see</td>
-        <td><strong>{{ request.effective_groups }}</strong></td>
+        <td style="padding:5px 0;color:{{ MUTED }};vertical-align:top;
+                   font:400 12.5px/1.6 {{ FONT }};">You can now see</td>
+        <td style="padding:5px 0;font:400 13px/1.6 {{ FONT }};color:{{ INK }};">
+          <strong>{{ request.effective_groups }}</strong></td>
       </tr>
       {% endif %}
     </table>
     {% if request.requested_groups and request.granted_groups
           and request.requested_groups != request.granted_groups %}
-    <div style="font:400 12px/1.6 {{ FONT }};color:{{ INK2 }};padding-top:8px;">
+    <div style="font:400 12px/1.6 {{ FONT }};color:{{ INK2 }};padding-top:10px;">
       This is narrower than you asked for ({{ request.requested_groups }}).
       Speak to the administrator if you need the rest.
     </div>
@@ -73,28 +78,37 @@
   {% endif %}
 
   {% if request.decision_note %}
-  <tr><td style="padding:14px 20px;border-bottom:1px solid {{ RULE }};">
-    <div style="font:600 12px/1.4 {{ FONT }};color:{{ MUTED }};
-                text-transform:uppercase;letter-spacing:0.04em;">Note from the administrator</div>
-    <div style="font:400 13px/1.6 {{ FONT }};color:{{ INK }};padding-top:5px;
-                white-space:pre-wrap;">{{ request.decision_note }}</div>
+  <tr><td style="padding:12px 24px 0 24px;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0"
+           style="background:{{ SUNKEN }};border:1px solid {{ RULE }};border-radius:{{ RADIUS }};">
+      <tr><td style="padding:13px 16px;">
+        <div style="font:700 10.5px/1.4 {{ FONT }};color:{{ MUTED }};
+                    text-transform:uppercase;letter-spacing:.055em;">Note from the administrator</div>
+        <div style="font:400 13px/1.65 {{ FONT }};color:{{ INK }};padding-top:6px;
+                    white-space:pre-wrap;">{{ request.decision_note }}</div>
+      </td></tr>
+    </table>
   </td></tr>
   {% endif %}
 
-  <tr><td style="padding:16px 20px 20px 20px;">
-    {% if approved and base_url %}
+  {% if approved and base_url %}
+  <tr><td style="padding:20px 24px 4px 24px;">
     <table role="presentation" cellpadding="0" cellspacing="0"><tr>
-      <td style="background:{{ ACCENT }};border-radius:5px;">
+      <td style="background:{{ ACCENT }};border-radius:8px;">
         <a href="{{ base_url }}/board"
-           style="display:inline-block;padding:9px 18px;font:600 12px/1 {{ FONT }};
-                  color:#ffffff;text-decoration:none;">Open the board</a>
+           style="display:inline-block;padding:12px 24px;font:650 13.5px/1 {{ FONT }};
+                  color:#ffffff;text-decoration:none;">Open the board &rarr;</a>
       </td>
     </tr></table>
-    {% endif %}
-    <div style="font:400 11px/1.6 {{ FONT }};color:{{ MUTED }};padding-top:12px;">
+  </td></tr>
+  {% endif %}
+
+  <tr><td style="padding:18px 24px 24px 24px;">
+    <div style="font:400 11.5px/1.65 {{ FONT }};color:{{ MUTED }};">
       {% if approved %}
-      The change is already live &mdash; you do not need to sign out and back in.
-      You will now receive the daily digest and risk alerts for the queues above.
+      <strong style="color:{{ INK2 }};">The change is already live</strong> &mdash;
+      you do not need to sign out and back in. You will now receive the daily
+      digest and risk alerts for the queues above.
       {% else %}
       Your access is unchanged. If the situation changes, speak to an
       administrator rather than resubmitting.
