@@ -34,6 +34,9 @@
     <nav class="nav">
       <a href="/board{{ keep }}"    class="{{ 'active' if path.startswith('/board') or path.startswith('/ticket') }}">Board</a>
       <a href="/agents{{ keep }}"   class="{{ 'active' if path.startswith('/agents') }}">By agent</a>
+      {% if user.role in ('ADMIN', 'LEAD') %}
+      <a href="/insights" class="{{ 'active' if path.startswith('/insights') }}">Insights</a>
+      {% endif %}
       <a href="/accuracy" class="{{ 'active' if path.startswith('/accuracy') }}">Accuracy</a>
       {% if user.role == 'ADMIN' %}
       <a href="/settings/weights" class="{{ 'active' if path.startswith('/settings') }}">Weights</a>

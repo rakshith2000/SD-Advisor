@@ -140,6 +140,17 @@ class JobRunner:
             log.exception('Index refresh failed')
 
         try:
+            # Before the prune, deliberately. The prune drops ticket_signal
+            # rows past the retention window and the rollup is built from
+            # them; the other order would quietly lose the oldest day of
+            # every trend, once, every night.
+            from pipeline.rollup import DailyRollup
+            result['rollup'] = DailyRollup(self.ctx).run()
+        except Exception:
+            log.exception('Daily rollup failed - the insight trends will be '
+                          'stale until the next successful run')
+
+        try:
             result['pruned'] = self.prune()
         except Exception:
             log.exception('Prune failed')

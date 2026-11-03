@@ -644,6 +644,8 @@ mysql -u sd_advisor -p sd_advisor_db < db/migrations/004_scope_provenance.sql
 mysql -u sd_advisor -p sd_advisor_db < db/migrations/005_user_timezone.sql
 mysql -u sd_advisor -p sd_advisor_db < db/migrations/006_generalise_team_wording.sql
 mysql -u sd_advisor -p sd_advisor_db < db/migrations/007_admin_settings.sql
+mysql -u sd_advisor -p sd_advisor_db < db/migrations/008_kb_accuracy.sql
+mysql -u sd_advisor -p sd_advisor_db < db/migrations/009_insights_rollup.sql
 mysql -u sd_advisor -p sd_advisor_db < db/schema.sql     # recreates the view
 
 sudo systemctl start aged-ticket-advisor""",
@@ -651,6 +653,11 @@ sudo systemctl start aged-ticket-advisor""",
 g.p('Every one is idempotent. 007 adds runtime_setting and setting_audit, which back the '
     'Admin settings page (§16.4b); until it is applied the page reports that storage is '
     'unavailable and the service runs on conf.json alone rather than failing.')
+g.p('008 adds recommendation_kb, which records which knowledge articles were put in '
+    'front of the model and which it actually cited — the two halves of the knowledge '
+    'accuracy figure. 009 adds signal_daily, the nightly rollup the Insights trend '
+    'pages read from; without it those pages report that there is no history yet '
+    'rather than failing, and the first rows appear after the first overnight run.')
 g.table(['Change', 'Former name', 'Current name'], [
     ['ticket_signal column', 'ball_in_court', 'pending_action_owner'],
     ['ticket_signal column', 'p90_overrun', 'duration_overrun'],
@@ -1974,6 +1981,28 @@ g.callout('warn', 'Some settings are read once, while the service is starting.',
           'mode, every mail setting and every review threshold — applies on save. The '
           'distinction is real: shadow mode in particular is read at send time precisely so '
           'that turning it off does not wait for a restart.')
+
+g.h2("16.4c The Insights pages")
+g.p('ADMIN and LEAD accounts get an Insights entry in the navigation bar: eight tabbed '
+    'sections — Operations, Backlog health, SLA and risk, People and workload, '
+    'Recommendation quality, Knowledge base, Service health and Executive summary — each '
+    'with its own time range (7, 30, 90 or 180 days, or a custom pair of dates).')
+g.p('Every figure is scoped to the queues the signed-in account is entitled to, enforced in '
+    'the SQL rather than in the template. An account with no assignment groups sees empty '
+    'panels, not the estate.')
+g.p('The charts are inline SVG rendered on the server. There is no charting library and no '
+    'external script: the pages work with scripting disabled and print legibly, and the '
+    'colours come from the same CSS variables as the board, so dark mode needs no second '
+    'rendering path.')
+g.callout('info', 'The trend pages read a nightly rollup, not the raw signals.',
+          'ticket_signal is written every stream tick and kept for 180 days - roughly eight '
+          'million rows on a desk carrying three hundred aged tickets. Querying that directly '
+          'for a ninety-day trend is a four-million-row scan per panel per page load: the '
+          'page would work, take several seconds, and stop being opened. The nightly '
+          'maintenance job writes one row per queue per day into signal_daily, and the trend '
+          'panels read that. It runs before the prune, deliberately - the prune drops the '
+          'signals the rollup is built from. Operations, SLA and risk, and People read '
+          'v_current_board directly, which is already cheap.')
 
 g.h2('16.5 Scheduled jobs installed')
 g.table(['Job ID', 'Trigger', 'What it does'], [

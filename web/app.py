@@ -36,7 +36,7 @@ from pipeline.scoring import DEFAULT_WEIGHTS
 from web import auth
 from web.access import (ALREADY_DECIDED, NOT_FOUND, REFUSED,
                         AccessRequestError, RoleRequestService)
-from web import exporting
+from web import exporting, insights
 from web.activity import group_activity
 from web.auth import (SessionManager, UserStore, require_admin, require_lead,
                       require_user, require_write, safe_next)
@@ -1039,6 +1039,57 @@ def create_app(config_path: Optional[str] = None) -> FastAPI:
                  user['username'], kb_number, number, verdict)
         return RedirectResponse(f'/ticket/{number}?kb_rated=1#knowledge',
                                 status_code=303)
+
+    # -----------------------------------------------------------------
+    # insights
+    #
+    # Eight sections, one tab each, gated to ADMIN and LEAD and scoped to the
+    # caller's queues in SQL. A chart that aggregates the whole estate and is
+    # merely captioned with one queue's name is a disclosure with nothing on
+    # screen to notice it by - an aggregate carries no incident numbers.
+    # -----------------------------------------------------------------
+
+    @app.get('/insights')
+    def insights_index():
+        return RedirectResponse('/insights/operations', status_code=303)
+
+    @app.get('/insights/{section}', response_class=HTMLResponse)
+    def insights_section(request: Request, section: str,
+                         user: Dict[str, Any] = Depends(require_lead)):
+        if section not in insights.SECTION_KEYS:
+            raise HTTPException(status_code=404, detail='No such section')
+
+        params = request.query_params
+        window = insights.parse_range(params.get('range'), params.get('from'),
+                                      params.get('to'))
+
+        visible = scope_of(user)
+
+        try:
+            data = insights.Insights(ctx, visible, window).build(section)
+        except Exception:
+            # One section failing must not take the tab strip with it -
+            # otherwise a bad query on the knowledge page makes operations
+            # unreachable too.
+            log.exception('Insights section %r failed to build', section)
+            data = {'tiles': [], 'panels': [], 'failed': True}
+
+        label = next(l for k, l, _b in insights.SECTIONS if k == section)
+        blurb = next(b for k, _l, b in insights.SECTIONS if k == section)
+
+        # The range travels with the tab links, so changing section keeps the
+        # window rather than silently snapping back to the default.
+        carried = f'?range={quote(window.key)}'
+        if window.is_custom:
+            carried += f'&from={window.start}&to={window.end}'
+
+        return render(request, 'insights.html',
+                      section=section, section_label=label,
+                      section_blurb=blurb, sections=insights.SECTIONS,
+                      ranges=insights.RANGES, window=window, query=carried,
+                      today=utc_now().date().isoformat(),
+                      visible_groups=visible, no_scope=not visible,
+                      data=data)
 
     # -----------------------------------------------------------------
     # agents & accuracy

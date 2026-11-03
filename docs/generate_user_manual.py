@@ -876,6 +876,21 @@ g.p('Email follows the same boundary. One message is sent per assignment group â
 g.p('If your board is empty and the page says no assignment groups are in scope, your account '
     'has not been given any yet. Request access from your profile page.')
 
+g.h2('8.4b Insights')
+g.p('Leads and administrators get an Insights entry in the navigation bar. Eight tabs, each '
+    'answering one question: what needs doing this morning, whether the backlog is under '
+    'control, what is about to breach, who is carrying the load, whether the advice is any '
+    'good, whether the knowledge base is being used, whether the service itself is healthy, '
+    'and a summary page for a review meeting.')
+g.p('The time range sits at the top right and applies to the tab you are on â€” 7, 30, 90 or '
+    '180 days, or Custom for a specific pair of dates. It stays with you as you move between '
+    'tabs, and it is part of the page address, so a link you send a colleague opens on the '
+    'same window you were looking at.')
+g.p('Everything is restricted to your own assignment groups. Two things worth knowing: the '
+    'trend tabs are built from a nightly summary, so on the first day after go-live they say '
+    'there is not enough history yet rather than drawing a flat line; and hovering any bar, '
+    'point or cell shows its exact value.')
+
 g.h2('8.5 For administrators: the settings page')
 g.p('Signed in as an administrator, the account menu at the top right carries Admin settings. '
     'It covers the review thresholds, the assignment groups, email, the access-request '

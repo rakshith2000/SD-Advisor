@@ -63,6 +63,26 @@
   --tint-serious: #fbe9dc;
   --tint-critical: #fae8e8;
 
+  /* Chart colour, assigned by the job it does rather than by position in a
+     loop. These are the only values core/charts.py knows about, which is
+     what lets dark mode be the same markup against different variables
+     instead of a second rendering path that drifts.
+
+     SERIES carries identity and stops at three: validated as a set for
+     colour-vision deficiency across every pair, which a fourth hue cannot
+     clear. Past three a chart folds the tail into "other" or facets. */
+  --series-1: #2a78d6;
+  --series-2: #eb6834;
+  --series-3: #1baf7a;
+
+  /* RAMP carries ordered magnitude - age bands, heat cells. One hue, light
+     to dark. A categorical scale here would encode an ordered thing as a set
+     of unrelated identities. */
+  --ramp-1: #86b6ef;
+  --ramp-2: #3987e5;
+  --ramp-3: #1c5cab;
+  --ramp-4: #0d366b;
+
   --font: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
           Helvetica, Arial, sans-serif;
   --mono: ui-monospace, SFMono-Regular, "Cascadia Mono", Menlo, monospace;
@@ -119,6 +139,30 @@
     --tint-warning: #2e2510;
     --tint-serious: #32210f;
     --tint-critical: #331717;
+
+  /* Selected for the dark surface, not auto-inverted: the same hues
+     stepped so they clear 3:1 against #181817. An inversion produces muddy
+     marks that fail contrast on the very surface they are drawn on. */
+  --series-1: #5a9ff0;
+  --series-2: #f0824f;
+  --series-3: #2fc48d;
+
+  --ramp-1: #1c3f68;
+  --ramp-2: #2a6cb4;
+  --ramp-3: #4a95e4;
+  --ramp-4: #9cc7f7;
+
+    /* Selected for the dark surface, not auto-inverted: the same hues
+       stepped so they clear 3:1 against #181817. An inversion produces muddy
+       marks that fail contrast on the very surface they are drawn on. */
+    --series-1: #5a9ff0;
+    --series-2: #f0824f;
+    --series-3: #2fc48d;
+
+    --ramp-1: #1c3f68;
+    --ramp-2: #2a6cb4;
+    --ramp-3: #4a95e4;
+    --ramp-4: #9cc7f7;
 
     --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.5);
     --shadow-2: 0 1px 2px rgba(0, 0, 0, 0.5), 0 4px 14px rgba(0, 0, 0, 0.42);
@@ -1039,4 +1083,206 @@ input.narrow { min-width: 96px; }
   gap: 6px;
   margin-left: auto;
   padding-left: 12px;
+}
+
+/* ---------------------------------------------------------------------------
+   Insights
+
+   Eight sections behind a tab strip, each a grid of panels. The charts are
+   inline SVG rendered server-side (core/charts.py), coloured entirely through
+   the --series-* / --ramp-* / --status-* variables above - which is what
+   makes dark mode the same markup rather than a second code path.
+   --------------------------------------------------------------------------- */
+
+.insights-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.insights-heading { min-width: 0; }
+
+/* -- time range -------------------------------------------------------- */
+
+.range-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: flex-end;
+}
+
+.range-presets {
+  display: inline-flex;
+  background: var(--surface-2);
+  border: 1px solid var(--grid);
+  border-radius: var(--radius-pill);
+  padding: 3px;
+  gap: 2px;
+}
+
+.range-chip {
+  font: 500 12.5px/1 var(--font);
+  color: var(--text-secondary);
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-pill);
+  padding: 7px 13px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background var(--motion), color var(--motion);
+}
+
+.range-chip:hover {
+  color: var(--text-primary);
+  background: var(--surface-1);
+}
+
+.range-chip.is-active {
+  background: var(--accent);
+  color: var(--text-inverse);
+  font-weight: 600;
+}
+
+.range-chip:focus-visible {
+  outline: 2px solid var(--accent-ring);
+  outline-offset: 2px;
+}
+
+.range-custom {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.range-custom input[type="date"] {
+  font: 400 12.5px/1.4 var(--font);
+  color: var(--text-primary);
+  background: var(--surface-0);
+  border: 1px solid var(--grid);
+  border-radius: var(--radius-sm);
+  padding: 5px 8px;
+}
+
+/* -- tabs -------------------------------------------------------------- */
+
+.insights-tabs {
+  display: flex;
+  gap: 2px;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--grid);
+  margin-bottom: 14px;
+}
+
+.insights-tabs a {
+  font: 500 13px/1 var(--font);
+  color: var(--text-secondary);
+  padding: 11px 14px;
+  white-space: nowrap;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  transition: color var(--motion), border-color var(--motion);
+}
+
+.insights-tabs a:hover {
+  color: var(--text-primary);
+  text-decoration: none;
+}
+
+.insights-tabs a.active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+  font-weight: 650;
+}
+
+.insights-scope {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin: 0 0 14px;
+}
+
+.insights-scope strong { color: var(--text-secondary); }
+
+/* -- panels ------------------------------------------------------------ */
+
+.insights-tiles { margin-bottom: 16px; }
+
+.tile-spark { margin: 6px 0 2px; height: 30px; }
+.tile-spark .sparkline { width: 100%; height: 30px; display: block; }
+
+.panel-grid {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 14px;
+  align-items: start;
+}
+
+.panel { margin-bottom: 0; }
+.panel.is-full  { grid-column: span 6; }
+.panel.is-half  { grid-column: span 3; }
+.panel.is-third { grid-column: span 2; }
+
+@media (max-width: 1180px) {
+  .panel.is-third { grid-column: span 3; }
+}
+
+@media (max-width: 860px) {
+  .panel.is-half, .panel.is-third { grid-column: span 6; }
+  .insights-head { flex-direction: column; align-items: stretch; }
+  .range-picker { align-items: stretch; }
+  .range-presets { overflow-x: auto; }
+}
+
+/* The SVG scales to its column and the viewBox fixes the proportions, so a
+   narrow panel gets a smaller chart rather than a cramped one. */
+.chart-holder { width: 100%; overflow: hidden; }
+
+.chart { width: 100%; height: auto; display: block; }
+.chart text { font-family: var(--font); }
+.chart-empty text { font-style: italic; }
+
+/* The tooltip itself comes from <title> on each mark, which browsers render
+   natively. The hover lift is what tells a reader one is there to find. */
+.chart rect:hover { filter: brightness(1.08); }
+
+.chart-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  list-style: none;
+  margin: 0 0 10px;
+  padding: 0;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.chart-legend li { display: inline-flex; align-items: center; gap: 6px; }
+
+.chart-legend .swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  flex: none;
+}
+
+/* Reserved for the sentence that stops a panel being misread - why a number
+   is low, or what it does not prove. Not a caption for everything. */
+.panel-footnote {
+  margin: 10px 0 0;
+  padding-top: 9px;
+  border-top: 1px dashed var(--grid);
+  font-size: 11.5px;
+  line-height: 1.6;
+  color: var(--text-muted);
+}
+
+.panel .card-head { align-items: baseline; }
+.panel .card-head .sub { text-align: right; max-width: 55%; }
+
+@media print {
+  .insights-tabs, .range-picker { display: none; }
+  .panel { break-inside: avoid; }
 }
