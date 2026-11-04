@@ -1050,12 +1050,16 @@ def create_app(config_path: Optional[str] = None) -> FastAPI:
     # -----------------------------------------------------------------
 
     @app.get('/insights')
-    def insights_index():
-        return RedirectResponse('/insights/operations', status_code=303)
+    def insights_index(group: Optional[str] = None):
+        target = '/insights/operations'
+        if group:
+            target = f'{target}?group={quote(group)}'
+        return RedirectResponse(target, status_code=303)
 
     @app.get('/insights/{section}', response_class=HTMLResponse)
     def insights_section(request: Request, section: str,
-                         user: Dict[str, Any] = Depends(require_lead)):
+                         user: Dict[str, Any] = Depends(require_lead),
+                         group: Optional[str] = None):
         if section not in insights.SECTION_KEYS:
             raise HTTPException(status_code=404, detail='No such section')
 
@@ -1063,10 +1067,10 @@ def create_app(config_path: Optional[str] = None) -> FastAPI:
         window = insights.parse_range(params.get('range'), params.get('from'),
                                       params.get('to'))
 
-        visible = scope_of(user)
+        groups = narrow_scope(user, group)
 
         try:
-            data = insights.Insights(ctx, visible, window).build(section)
+            data = insights.Insights(ctx, groups, window).build(section)
         except Exception:
             # One section failing must not take the tab strip with it -
             # otherwise a bad query on the knowledge page makes operations
@@ -1078,17 +1082,23 @@ def create_app(config_path: Optional[str] = None) -> FastAPI:
         blurb = next(b for k, _l, b in insights.SECTIONS if k == section)
 
         # The range travels with the tab links, so changing section keeps the
-        # window rather than silently snapping back to the default.
-        carried = f'?range={quote(window.key)}'
+        # window rather than silently snapping back to the default. The queue
+        # filter travels with it as well, so switching tabs keeps both.
+        carried_params = []
+        if group:
+            carried_params.append(f'group={quote(group)}')
+        carried_params.append(f'range={quote(window.key)}')
         if window.is_custom:
-            carried += f'&from={window.start}&to={window.end}'
+            carried_params.append(f'from={window.start}')
+            carried_params.append(f'to={window.end}')
+        carried = '?' + '&'.join(carried_params) if carried_params else ''
 
         return render(request, 'insights.html',
                       section=section, section_label=label,
                       section_blurb=blurb, sections=insights.SECTIONS,
                       ranges=insights.RANGES, window=window, query=carried,
                       today=utc_now().date().isoformat(),
-                      visible_groups=visible, no_scope=not visible,
+                      visible_groups=groups, no_scope=not groups,
                       data=data)
 
     # -----------------------------------------------------------------

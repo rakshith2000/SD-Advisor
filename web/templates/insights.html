@@ -21,6 +21,11 @@
     the Back button does what it appears to do.
   #}
   <form class="range-picker" method="get" action="/insights/{{ section }}">
+    {# Preserve the queue filter when the range changes so the view stays on
+       the same assignment group rather than silently widening back to all. #}
+    {% if request.query_params.get('group') %}
+    <input type="hidden" name="group" value="{{ request.query_params.get('group') }}">
+    {% endif %}
     <div class="range-presets" role="group" aria-label="Time range">
       {% for key, label, _days in ranges %}
       <button type="submit" name="range" value="{{ key }}"

@@ -385,7 +385,7 @@ class TestTheRoute:
         assert 'carried' in route_body and 'range=' in route_body
 
     def test_it_is_scoped_from_the_account(self, route_body):
-        assert 'scope_of(user)' in route_body
+        assert 'narrow_scope(user, group)' in route_body
 
     def test_the_nav_entry_is_role_gated(self):
         base = (ROOT / 'web' / 'templates' / 'base.html'
