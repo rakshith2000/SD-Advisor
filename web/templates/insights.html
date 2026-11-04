@@ -26,7 +26,7 @@
     {% if request.query_params.get('group') %}
     <input type="hidden" name="group" value="{{ request.query_params.get('group') }}">
     {% endif %}
-    <div class="range-presets" role="group" aria-label="Time range">
+    <!--<div class="range-presets" role="group" aria-label="Time range">
       {% for key, label, _days in ranges %}
       <button type="submit" name="range" value="{{ key }}"
               class="range-chip {{ 'is-active' if window.key == key }}"
@@ -37,7 +37,7 @@
               aria-expanded="{{ 'true' if window.is_custom else 'false' }}"
               aria-controls="range-custom"
               onclick="toggleCustomRange(this)">Custom</button>
-    </div>
+    </div>-->
 
     <div class="range-custom" id="range-custom"
          {% if not window.is_custom %}hidden{% endif %}>
