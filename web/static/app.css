@@ -1107,10 +1107,55 @@ input.narrow { min-width: 96px; }
 /* -- time range -------------------------------------------------------- */
 
 .range-picker {
+  display: grid;
+  grid-template-columns: minmax(0, 260px) minmax(0, 220px);
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.range-absolute,
+.range-quick {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  align-items: flex-end;
+  gap: 6px;
+  font-size: 12px;
+}
+
+.range-title {
+  font: 600 12px/1.4 var(--font);
+  color: var(--text-secondary);
+  margin: 0 0 4px;
+}
+
+.range-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.range-row label {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.range-note {
+  margin: 4px 0 0;
+  color: var(--text-muted);
+}
+
+.range-quick-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.range-quick-list .range-chip {
+  width: 100%;
+  text-align: left;
 }
 
 .range-presets {
@@ -1232,7 +1277,7 @@ input.narrow { min-width: 96px; }
 @media (max-width: 860px) {
   .panel.is-half, .panel.is-third { grid-column: span 6; }
   .insights-head { flex-direction: column; align-items: stretch; }
-  .range-picker { align-items: stretch; }
+  .range-picker { grid-template-columns: 1fr; align-items: stretch; }
   .range-presets { overflow-x: auto; }
 }
 

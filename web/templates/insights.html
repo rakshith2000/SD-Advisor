@@ -26,29 +26,33 @@
     {% if request.query_params.get('group') %}
     <input type="hidden" name="group" value="{{ request.query_params.get('group') }}">
     {% endif %}
-    <div class="range-presets" role="group" aria-label="Time range">
-      {% for key, label, _days in ranges %}
-      <button type="submit" name="range" value="{{ key }}"
-              class="range-chip {{ 'is-active' if window.key == key }}"
-              {% if window.key == key %}aria-current="true"{% endif %}>{{ label }}</button>
-      {% endfor %}
-      <button type="button"
-              class="range-chip {{ 'is-active' if window.is_custom }}"
-              aria-expanded="{{ 'true' if window.is_custom else 'false' }}"
-              aria-controls="range-custom"
-              onclick="toggleCustomRange(this)">Custom</button>
+
+    <div class="range-absolute">
+      <h2 class="range-title">Absolute time range</h2>
+      <div class="range-row">
+        <label for="range-from">From</label>
+        <input id="range-from" name="from" type="date"
+               value="{{ window.start }}" max="{{ today }}">
+        <label for="range-to">To</label>
+        <input id="range-to" name="to" type="date"
+               value="{{ window.end }}" max="{{ today }}">
+        <input type="hidden" name="range" value="custom">
+        <button class="btn small primary" type="submit">Apply time range</button>
+      </div>
+      <p class="range-note">Data is available for the last 180 days.</p>
     </div>
 
-    <div class="range-custom" id="range-custom"
-         {% if not window.is_custom %}hidden{% endif %}>
-      <label for="range-from">From</label>
-      <input id="range-from" name="from" type="date"
-             value="{{ window.start }}" max="{{ today }}">
-      <label for="range-to">To</label>
-      <input id="range-to" name="to" type="date"
-             value="{{ window.end }}" max="{{ today }}">
-      <input type="hidden" name="range" value="custom">
-      <button class="btn small primary" type="submit">Apply</button>
+    <div class="range-quick">
+      <h2 class="range-title">Quick ranges</h2>
+      <ul class="range-quick-list">
+        {% for key, label, _days in ranges %}
+        <li>
+          <button type="submit" name="range" value="{{ key }}"
+                  class="range-chip {{ 'is-active' if window.key == key }}"
+                  {% if window.key == key %}aria-current="true"{% endif %}>{{ label }}</button>
+        </li>
+        {% endfor %}
+      </ul>
     </div>
   </form>
 </div>
