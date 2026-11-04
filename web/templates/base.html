@@ -37,8 +37,8 @@
       {% if user.role in ('ADMIN', 'LEAD') %}
       <a href="/insights{{ keep }}" class="{{ 'active' if path.startswith('/insights') }}">Insights</a>
       {% endif %}
-      <a href="/accuracy" class="{{ 'active' if path.startswith('/accuracy') }}">Accuracy</a>
       {% if user.role == 'ADMIN' %}
+      <a href="/accuracy" class="{{ 'active' if path.startswith('/accuracy') }}">Accuracy</a>
       <a href="/settings/weights" class="{{ 'active' if path.startswith('/settings') }}">Weights</a>
       <a href="/admin/role-requests" class="{{ 'active' if path.startswith('/admin/role-requests') }}">
         Access{% if pending_access_requests %}
@@ -46,7 +46,7 @@
       </a>
       {% endif %}
       {% if user.role in ('ADMIN', 'LEAD') %}
-      <a href="/digest/preview{{ keep }}" target="_blank" rel="noopener">Digest preview</a>
+      <!--<a href="/digest/preview{{ keep }}" target="_blank" rel="noopener">Digest preview</a>-->
       {% endif %}
     </nav>
     <div class="topbar-meta">
