@@ -68,6 +68,7 @@ CREATE TABLE IF NOT EXISTS ticket_signal (
     id                          BIGINT       NOT NULL AUTO_INCREMENT,
     incident_number             VARCHAR(50)  NOT NULL,
     computed_at                 DATETIME     NOT NULL,
+    assignment_group            VARCHAR(150) NULL,
 
     age_days                    DECIMAL(8,2) NOT NULL DEFAULT 0,
     idle_days                   DECIMAL(8,2) NOT NULL DEFAULT 0,
@@ -211,6 +212,7 @@ CREATE TABLE IF NOT EXISTS digest_run (
     id            BIGINT       NOT NULL AUTO_INCREMENT,
     run_type      VARCHAR(40)  NOT NULL,
     audience      VARCHAR(40)  NOT NULL,
+    assignment_group VARCHAR(150) NULL,
     recipient     VARCHAR(200) NOT NULL,
     ticket_count  INT          NOT NULL DEFAULT 0,
     new_count     INT          NOT NULL DEFAULT 0,

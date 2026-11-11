@@ -1097,6 +1097,7 @@ def create_app(config_path: Optional[str] = None) -> FastAPI:
                       section=section, section_label=label,
                       section_blurb=blurb, sections=insights.SECTIONS,
                       ranges=insights.RANGES, window=window, query=carried,
+                      range_note=insights.RANGE_NOTES[section],
                       today=utc_now().date().isoformat(),
                       visible_groups=groups, no_scope=not groups,
                       data=data)

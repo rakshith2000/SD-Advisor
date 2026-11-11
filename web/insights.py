@@ -56,6 +56,17 @@ SECTIONS: List[Tuple[str, str, str]] = [
 
 SECTION_KEYS = [key for key, _label, _blurb in SECTIONS]
 
+RANGE_NOTES = {
+    'operations': 'Current snapshot; the date range does not apply.',
+    'backlog': 'Historical trends use this period.',
+    'risk': 'Tiles and the breach worklist are current; the trend uses this period.',
+    'people': 'Current snapshot; the date range does not apply.',
+    'quality': 'Recommendations and verdicts recorded in this period.',
+    'knowledge': 'Usage is historical; category gaps are a current snapshot.',
+    'health': 'Logs and feedback use this period; sync freshness is current.',
+    'summary': 'Historical trends use this period.',
+}
+
 AGREED = "('ACCEPTED', 'MODIFIED', 'DONE')"
 
 # -- time range -------------------------------------------------------------
@@ -129,9 +140,9 @@ def parse_range(key: Optional[str], start: Optional[str], end: Optional[str],
             # line; an end in the future draws empty columns that read as an
             # outage.
             parsed_end = min(parsed_end, today)
-            parsed_start = max(
-                parsed_start,
-                today - datetime.timedelta(days=MAX_RANGE_DAYS - 1))
+            retention_floor = today - datetime.timedelta(days=MAX_RANGE_DAYS - 1)
+            parsed_end = max(parsed_end, retention_floor)
+            parsed_start = min(max(parsed_start, retention_floor), parsed_end)
             return TimeRange('custom', parsed_start, parsed_end)
 
     days = _PRESET_DAYS.get(key or '', _PRESET_DAYS[DEFAULT_RANGE])
@@ -253,6 +264,7 @@ class Insights:
         self.db = ctx.db
         self.groups = [g for g in groups if str(g).strip()]
         self.window = window
+        self._query_failed = False
 
     # -- scoped query plumbing ---------------------------------------------
 
@@ -275,6 +287,7 @@ class Insights:
         except Exception:
             # A missing rollup table or one slow query must degrade a single
             # panel, not a page carrying seven others.
+            self._query_failed = True
             log.exception('Insights query failed')
             return []
 
@@ -310,7 +323,8 @@ class Insights:
     # -- dispatch -----------------------------------------------------------
 
     def build(self, section: str) -> Dict[str, Any]:
-        return {
+        self._query_failed = False
+        data = {
             'operations': self.operations,
             'backlog': self.backlog,
             'risk': self.risk,
@@ -320,6 +334,9 @@ class Insights:
             'health': self.health,
             'summary': self.summary,
         }.get(section, self.operations)()
+        if self._query_failed:
+            data['failed'] = True
+        return data
 
     # ===================================================================
     # A. Operations
@@ -368,7 +385,9 @@ class Insights:
                      'critical' if team_owned else 'good'),
                 tile('SLA breached', breached, 'already past target',
                      'critical' if breached else 'good'),
-                tile('No action 4+ days', stale, 'prolonged inactivity',
+                tile('No action '
+                     f'{int(self.ctx.settings.get("thresholds.prolonged_inactivity_days", 4))}+ days',
+                     stale, 'prolonged inactivity',
                      'serious' if stale else 'good'),
                 tile('Breaching in 48h', int(soon.get('n') or 0),
                      'still actionable today',
@@ -454,6 +473,10 @@ class Insights:
         change = tickets[-1] - tickets[0]
         p90_now = float(rows[-1].get('p90') or 0)
         p90_then = float(rows[0].get('p90') or 0)
+        first_day = rows[0]['day']
+        last_day = rows[-1]['day']
+        first_label = first_day.strftime('%d %b') if hasattr(first_day, 'strftime') else str(first_day)
+        last_label = last_day.strftime('%d %b') if hasattr(last_day, 'strftime') else str(last_day)
 
         bands = [
             {'name': '5-10 days', 'values': [int(r['b1'] or 0) for r in rows],
@@ -469,23 +492,23 @@ class Insights:
         clause, params = self.scope()
         queues = self.query(f"""
             SELECT assignment_group,
-                   ROUND(SUM(tickets) / COUNT(DISTINCT day), 1) AS avg_open
+                   ROUND(SUM(tickets) / %s, 1) AS avg_open
               FROM signal_daily
              WHERE day BETWEEN %s AND %s {clause}
              GROUP BY assignment_group ORDER BY avg_open DESC
-        """, [self.window.start, self.window.end] + params)
+        """, [self.window.days, self.window.start, self.window.end] + params)
 
         return {
             'tiles': [
-                tile('Aged now', tickets[-1],
-                     f'{abs(change)} {"fewer" if change <= 0 else "more"} '
-                     f'than {self.window.days} days ago',
+                tile('Aged at latest rollup', tickets[-1],
+                     f'as of {last_label}; {abs(change)} '
+                     f'{"fewer" if change <= 0 else "more"} than {first_label}',
                      'good' if change <= 0 else 'serious', spark=tickets),
-                tile('Median age',
+                tile('Mean queue median',
                      days_text(rows[-1].get('median_age')),
-                     'what a typical aged ticket looks like'),
-                tile('p90 age', days_text(p90_now),
-                     f'was {days_text(p90_then)} - the tail is what matters',
+                     'unweighted mean of each queue median; not a pooled median'),
+                tile('Highest queue p90', days_text(p90_now),
+                     f'was {days_text(p90_then)}; worst queue, not pooled p90',
                      'critical' if p90_now > p90_then else 'good'),
                 tile('Arrived / retired', f'{sum(newly)} / {sum(retired)}',
                      'across the whole range',
@@ -526,8 +549,14 @@ class Insights:
                           [{'label': q['assignment_group'],
                             'value': float(q['avg_open'] or 0)}
                            for q in queues], label_w=150),
-                      'mean daily count over the range', 'half'),
+                      'mean daily count over the full range; absent queue-days count as zero',
+                      'half'),
             ],
+            'caveat': ('Age statistics are queue-level summaries: the median '
+                       'tile is the unweighted mean of queue medians, and the '
+                       'p90 tile reports the highest queue p90. Signal history '
+                       'recorded before queue snapshots were added falls back '
+                       'to the ticket’s current queue.'),
         }
 
     # ===================================================================
@@ -747,6 +776,7 @@ class Insights:
 
     def quality(self) -> Dict[str, Any]:
         since, until = self.window.since, self.window.until
+        clause, scope_params = self.scope('w.assignment_group')
 
         overall = self.one(f"""
             SELECT COUNT(*) AS judged,
@@ -754,49 +784,59 @@ class Insights:
                    SUM(decision = 'ACCEPTED') AS accepted,
                    SUM(decision = 'MODIFIED') AS modified,
                    SUM(decision = 'REJECTED') AS rejected,
-                   SUM(decision = 'NOT_APPLICABLE') AS not_applicable
-              FROM recommendation_feedback
-             WHERE created_at BETWEEN %s AND %s
-        """, (since, until))
+                   SUM(decision = 'NOT_APPLICABLE') AS not_applicable,
+                   SUM(decision = 'DONE') AS done
+              FROM recommendation_feedback f
+              JOIN watched_ticket w ON w.incident_number = f.incident_number
+             WHERE f.created_at BETWEEN %s AND %s {clause}
+        """, [since, until] + scope_params)
 
-        produced = self.one("""
-            SELECT COUNT(*) AS n FROM recommendation
-             WHERE created_at BETWEEN %s AND %s AND superseded = 0
-        """, (since, until))
+        produced = self.one(f"""
+            SELECT COUNT(*) AS n
+              FROM recommendation r
+              JOIN watched_ticket w ON w.incident_number = r.incident_number
+             WHERE r.created_at BETWEEN %s AND %s AND r.superseded = 0 {clause}
+        """, [since, until] + scope_params)
 
         by_action = self.query(f"""
             SELECT r.recommended_action AS action, COUNT(*) AS judged,
                    SUM(f.decision IN {AGREED}) AS agreed
               FROM recommendation_feedback f
               JOIN recommendation r ON r.id = f.recommendation_id
-             WHERE f.created_at BETWEEN %s AND %s
+              JOIN watched_ticket w ON w.incident_number = f.incident_number
+             WHERE f.created_at BETWEEN %s AND %s {clause}
              GROUP BY r.recommended_action ORDER BY judged DESC
-        """, (since, until))
+        """, [since, until] + scope_params)
 
         calibration = self.query(f"""
             SELECT FLOOR(r.confidence * 10) AS bucket, COUNT(*) AS judged,
                    SUM(f.decision IN {AGREED}) AS agreed
               FROM recommendation_feedback f
               JOIN recommendation r ON r.id = f.recommendation_id
-             WHERE f.created_at BETWEEN %s AND %s AND r.confidence >= 0.5
+              JOIN watched_ticket w ON w.incident_number = f.incident_number
+             WHERE f.created_at BETWEEN %s AND %s
+               AND r.confidence >= 0.5 {clause}
              GROUP BY bucket ORDER BY bucket
-        """, (since, until))
+        """, [since, until] + scope_params)
 
         trend = self.query(f"""
-            SELECT DATE(created_at) AS day, COUNT(*) AS judged,
+            SELECT DATE(f.created_at) AS day, COUNT(*) AS judged,
                    SUM(decision IN {AGREED}) AS agreed
-              FROM recommendation_feedback
-             WHERE created_at BETWEEN %s AND %s
-             GROUP BY DATE(created_at) ORDER BY day
-        """, (since, until))
+              FROM recommendation_feedback f
+              JOIN watched_ticket w ON w.incident_number = f.incident_number
+             WHERE f.created_at BETWEEN %s AND %s {clause}
+             GROUP BY DATE(f.created_at) ORDER BY day
+        """, [since, until] + scope_params)
 
-        cost = self.one("""
+        cost = self.one(f"""
             SELECT COUNT(*) AS calls, ROUND(AVG(latency_ms)) AS latency,
                    SUM(prompt_tokens) AS prompt_tokens,
                    SUM(completion_tokens) AS completion_tokens,
                    SUM(model = 'rule-fallback') AS fallbacks
-              FROM recommendation WHERE created_at BETWEEN %s AND %s
-        """, (since, until))
+              FROM recommendation r
+              JOIN watched_ticket w ON w.incident_number = r.incident_number
+             WHERE r.created_at BETWEEN %s AND %s {clause}
+        """, [since, until] + scope_params)
 
         judged = int(overall.get('judged') or 0)
         agreement = pct(overall.get('agreed'), judged)
@@ -882,6 +922,8 @@ class Insights:
                       show(pct(overall.get('accepted'), judged))],
                      ['Accepted with edits', overall.get('modified') or 0,
                       show(pct(overall.get('modified'), judged))],
+                     ['Done', overall.get('done') or 0,
+                      show(pct(overall.get('done'), judged))],
                      ['Rejected', overall.get('rejected') or 0,
                       show(pct(overall.get('rejected'), judged))],
                      ['Not applicable', overall.get('not_applicable') or 0,
@@ -892,6 +934,8 @@ class Insights:
                     empty='Nobody has recorded a verdict in this range, so '
                           'there is no agreement figure to report.'),
             ],
+            'caveat': ('Recommendations and feedback are attributed to the '
+                       'ticket’s current assignment group.'),
         }
 
     # ===================================================================
@@ -900,8 +944,9 @@ class Insights:
 
     def knowledge(self) -> Dict[str, Any]:
         since, until = self.window.since, self.window.until
+        clause, scope_params = self.scope('w.assignment_group')
 
-        usage = self.one("""
+        usage = self.one(f"""
             SELECT COUNT(DISTINCT k.recommendation_id) AS with_offer,
                    COUNT(DISTINCT CASE WHEN k.cited = 1
                                        THEN k.recommendation_id END) AS with_cite,
@@ -910,38 +955,43 @@ class Insights:
                    SUM(k.source = 'text_search') AS fallback
               FROM recommendation_kb k
               JOIN recommendation r ON r.id = k.recommendation_id
-             WHERE r.created_at BETWEEN %s AND %s
-        """, (since, until))
+              JOIN watched_ticket w ON w.incident_number = k.incident_number
+             WHERE r.created_at BETWEEN %s AND %s {clause}
+        """, [since, until] + scope_params)
 
-        rated = self.one("""
+        rated = self.one(f"""
             SELECT COUNT(*) AS rated, SUM(verdict = 'RELEVANT') AS relevant,
                    SUM(verdict IN ('IRRELEVANT', 'OUTDATED')) AS wrong
-              FROM recommendation_kb
-             WHERE cited = 1 AND verdict <> 'UNRATED'
-               AND rated_at BETWEEN %s AND %s
-        """, (since, until))
+              FROM recommendation_kb k
+              JOIN watched_ticket w ON w.incident_number = k.incident_number
+             WHERE k.cited = 1 AND k.verdict <> 'UNRATED'
+               AND k.rated_at BETWEEN %s AND %s {clause}
+        """, [since, until] + scope_params)
 
-        produced = self.one("""
-            SELECT COUNT(*) AS n FROM recommendation
-             WHERE created_at BETWEEN %s AND %s AND superseded = 0
-        """, (since, until))
+        produced = self.one(f"""
+            SELECT COUNT(*) AS n
+              FROM recommendation r
+              JOIN watched_ticket w ON w.incident_number = r.incident_number
+             WHERE r.created_at BETWEEN %s AND %s AND r.superseded = 0 {clause}
+        """, [since, until] + scope_params)
 
-        top = self.query("""
+        top = self.query(f"""
             SELECT k.kb_number, COUNT(*) AS offers, SUM(k.cited = 1) AS cites,
                    SUM(k.verdict = 'RELEVANT') AS good,
                    SUM(k.verdict IN ('IRRELEVANT', 'OUTDATED')) AS bad
               FROM recommendation_kb k
               JOIN recommendation r ON r.id = k.recommendation_id
-             WHERE r.created_at BETWEEN %s AND %s
+              JOIN watched_ticket w ON w.incident_number = k.incident_number
+             WHERE r.created_at BETWEEN %s AND %s {clause}
              GROUP BY k.kb_number ORDER BY cites DESC, offers DESC LIMIT 12
-        """, (since, until))
+        """, [since, until] + scope_params)
 
-        clause, params = self.scope()
+        board_clause, params = self.scope()
         gaps = self.query(f"""
             SELECT COALESCE(NULLIF(category, ''), '(uncategorised)') AS category,
                    COUNT(*) AS aged, SUM(kb_available = 1) AS has_article,
                    SUM(kb_attached = 1) AS attached
-              FROM v_current_board WHERE snoozed = 0 {clause}
+              FROM v_current_board WHERE snoozed = 0 {board_clause}
              GROUP BY category HAVING aged >= 2
              ORDER BY (COUNT(*) - SUM(kb_available = 1)) DESC, aged DESC
              LIMIT 12
@@ -1014,6 +1064,9 @@ class Insights:
                              'problem.',
                     empty='No articles were retrieved in this range.'),
             ],
+            'caveat': ('Usage and article ratings are attributed to the '
+                       'ticket’s current assignment group. Category gaps are '
+                       'a current snapshot, not a historical trend.'),
         }
 
     # ===================================================================
@@ -1022,6 +1075,7 @@ class Insights:
 
     def health(self) -> Dict[str, Any]:
         since, until = self.window.since, self.window.until
+        clause, scope_params = self.scope()
 
         stale_mins = None
         try:
@@ -1029,35 +1083,50 @@ class Insights:
             if watermark:
                 stale_mins = int((utc_now() - watermark).total_seconds() // 60)
         except Exception:
-            log.debug('No sync watermark available')
+            self._query_failed = True
+            log.exception('Could not read the Insights sync watermark')
 
-        mail = self.query("""
+        mail = self.query(f"""
             SELECT run_type, status, COUNT(*) AS n,
                    SUM(ticket_count) AS tickets
-              FROM digest_run WHERE sent_at BETWEEN %s AND %s
+              FROM digest_run
+             WHERE sent_at BETWEEN %s AND %s {clause}
              GROUP BY run_type, status ORDER BY n DESC
-        """, (since, until))
+        """, [since, until] + scope_params)
 
-        alerts = self.query("""
-            SELECT DATE(fired_at) AS day, COUNT(*) AS n
-              FROM alert_log WHERE fired_at BETWEEN %s AND %s
-             GROUP BY DATE(fired_at) ORDER BY day
-        """, (since, until))
+        alert_clause, alert_params = self.scope('w.assignment_group')
+        alerts = self.query(f"""
+            SELECT DATE(a.fired_at) AS day, COUNT(*) AS n
+              FROM alert_log a
+              JOIN watched_ticket w ON w.incident_number = a.incident_number
+             WHERE a.fired_at BETWEEN %s AND %s {alert_clause}
+             GROUP BY DATE(a.fired_at) ORDER BY day
+        """, [since, until] + alert_params)
 
-        adoption = self.query("""
-            SELECT user_name, COUNT(*) AS verdicts,
-                   MAX(created_at) AS last_seen
-              FROM recommendation_feedback
-             WHERE created_at BETWEEN %s AND %s
+        adoption = self.query(f"""
+            SELECT f.user_name, COUNT(*) AS verdicts,
+                   MAX(f.created_at) AS last_seen
+              FROM recommendation_feedback f
+              JOIN watched_ticket w ON w.incident_number = f.incident_number
+             WHERE f.created_at BETWEEN %s AND %s {alert_clause}
              GROUP BY user_name ORDER BY verdicts DESC LIMIT 12
-        """, (since, until))
+        """, [since, until] + alert_params)
 
-        accounts = self.one("""
-            SELECT COUNT(*) AS total, SUM(role = 'ADMIN') AS admins,
-                   SUM(role <> 'ADMIN' AND (assignment_groups IS NULL
-                       OR TRIM(assignment_groups) = '')) AS stranded
-              FROM advisor_user WHERE active = 1
-        """)
+        account_rows = (self.query(
+            'SELECT role, assignment_groups FROM advisor_user WHERE active = 1')
+            if self.groups else [])
+        scoped_groups = {group.strip().lower() for group in self.groups}
+        scoped_accounts = 0
+        for account in account_rows:
+            account_groups = {
+                group.strip().lower()
+                for group in (account.get('assignment_groups') or '').split(',')
+                if group.strip()
+            }
+            if account.get('role') == 'ADMIN' and not account_groups:
+                scoped_accounts += 1
+            elif scoped_groups.intersection(account_groups):
+                scoped_accounts += 1
 
         failures = sum(int(m['n'] or 0) for m in mail
                        if m['status'] == 'FAILED')
@@ -1069,19 +1138,15 @@ class Insights:
                 tile('Last sync',
                      f'{stale_mins} min ago' if stale_mins is not None
                      else charts.DASH,
-                     'everything else is wrong if this is',
+                     'service-wide delta watermark',
                      'critical' if (stale_mins or 0) > 60 else 'good'),
                 tile('Mail failures', failures, 'in this range',
                      'critical' if failures else 'good'),
                 tile('Suppressed', suppressed,
                      'shadow mode or mail disabled',
                      'warning' if suppressed else 'good'),
-                tile('Active accounts', int(accounts.get('total') or 0),
-                     f'{int(accounts.get("admins") or 0)} administrators'),
-                tile('Accounts with no queue',
-                     int(accounts.get('stranded') or 0),
-                     'they see an empty board and get no mail',
-                     'serious' if accounts.get('stranded') else 'good'),
+                tile('Active accounts in scope', scoped_accounts,
+                     'admins and users with access to these queues'),
             ],
             'panels': [
                 panel('Alert volume',
@@ -1114,6 +1179,12 @@ class Insights:
                     empty='Nobody has recorded a verdict in this range. The '
                           'quality page cannot mean anything until they do.'),
             ],
+            'caveat': ('Delivery and alert counts are restricted to the '
+                       'selected queues. Account counts include only admins '
+                       'and users whose configured scope intersects them. '
+                       'Alerts use the ticket’s current queue; delivery rows '
+                       'without a single queue attribution are '
+                       'excluded. Sync freshness is service-wide.'),
         }
 
     # ===================================================================
@@ -1130,11 +1201,13 @@ class Insights:
             return self._awaiting_rollup()
 
         since, until = self.window.since, self.window.until
+        clause, scope_params = self.scope('w.assignment_group')
         judged = self.one(f"""
             SELECT COUNT(*) AS judged, SUM(decision IN {AGREED}) AS agreed
-              FROM recommendation_feedback
-             WHERE created_at BETWEEN %s AND %s
-        """, (since, until))
+              FROM recommendation_feedback f
+              JOIN watched_ticket w ON w.incident_number = f.incident_number
+             WHERE f.created_at BETWEEN %s AND %s {clause}
+        """, [since, until] + scope_params)
 
         first, last = rows[0], rows[-1]
         opened = sum(int(r['newly'] or 0) for r in rows)
@@ -1142,12 +1215,16 @@ class Insights:
         change = int(last['tickets'] or 0) - int(first['tickets'] or 0)
         agreement = pct(judged.get('agreed'), judged.get('judged'))
         labels = self.labels(rows)
+        first_day = first['day']
+        last_day = last['day']
+        first_label = first_day.strftime('%d %b') if hasattr(first_day, 'strftime') else str(first_day)
+        last_label = last_day.strftime('%d %b') if hasattr(last_day, 'strftime') else str(last_day)
 
         return {
             'tiles': [
                 tile('Aged backlog', int(last['tickets'] or 0),
                      f'{abs(change)} {"fewer" if change <= 0 else "more"} '
-                     f'than {self.window.days} days ago',
+                     f'than {first_label}; latest is {last_label}',
                      'good' if change <= 0 else 'serious',
                      spark=[int(r['tickets'] or 0) for r in rows]),
                 tile('Tickets retired', closed,
@@ -1195,7 +1272,9 @@ class Insights:
                 'These figures describe what happened alongside this service, '
                 'not what it caused. There is no counterfactual in the data - '
                 'no record of what the backlog would have done without it - '
-                'so nothing here is presented as a saving.',
+                'so nothing here is presented as a saving. Recommendation '
+                'feedback is attributed to each ticket’s current assignment '
+                'group.',
         }
 
     # -- shared --------------------------------------------------------------

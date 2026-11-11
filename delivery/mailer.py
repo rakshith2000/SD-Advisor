@@ -114,7 +114,8 @@ class Mailer:
     def send(self, to: List[str], subject: str, html_body: str,
              text_body: str = '', run_type: str = 'digest',
              audience: str = 'lead', ticket_count: int = 0,
-             new_count: int = 0, cc: Optional[List[str]] = None) -> bool:
+             new_count: int = 0, cc: Optional[List[str]] = None,
+             assignment_group: Optional[str] = None) -> bool:
         recipients = [r for r in (to or []) if r and '@' in r]
         if not recipients:
             log.warning('Skipping send - no valid recipients for %r', subject)
@@ -146,7 +147,7 @@ class Mailer:
                      reason, full_subject, ', '.join(recipients),
                      f" cc {', '.join(copies)}" if copies else '', ticket_count)
             self._record(run_type, audience, recipients, ticket_count, new_count,
-                         'SUPPRESSED', reason, copies)
+                         'SUPPRESSED', reason, copies, assignment_group)
             return False
 
         message = EmailMessage()
@@ -173,14 +174,14 @@ class Mailer:
         except Exception as exc:
             log.exception('Failed to send %r', full_subject)
             self._record(run_type, audience, recipients, ticket_count, new_count,
-                         'FAILED', str(exc)[:500], copies)
+                         'FAILED', str(exc)[:500], copies, assignment_group)
             return False
 
         log.info('Sent %r to %s%s (%d tickets)', full_subject,
                  ', '.join(recipients),
                  f" cc {', '.join(copies)}" if copies else '', ticket_count)
         self._record(run_type, audience, recipients, ticket_count, new_count,
-                     'SENT', '', copies)
+                     'SENT', '', copies, assignment_group)
         return True
 
     # -- internals ---------------------------------------------------------
@@ -202,7 +203,8 @@ class Mailer:
 
     def _record(self, run_type: str, audience: str, recipients: List[str],
                 ticket_count: int, new_count: int, status: str, error: str,
-                copies: Optional[List[str]] = None) -> None:
+                copies: Optional[List[str]] = None,
+                assignment_group: Optional[str] = None) -> None:
         if self.db is None:
             return
         # To first, then Cc. The column is short and gets truncated, and "who
@@ -214,6 +216,7 @@ class Mailer:
             self.db.insert('digest_run', {
                 'run_type': run_type,
                 'audience': audience,
+                'assignment_group': assignment_group,
                 'recipient': addressed[:200],
                 'ticket_count': ticket_count,
                 'new_count': new_count,

@@ -105,7 +105,7 @@ class Orchestrator:
         scoring = compute_attention_score(ticket, signals, weights, thresholds)
         signals['attention_score'] = scoring['score']
 
-        self._store_signals(number, signals, scoring)
+        self._store_signals(number, ticket.get('assignment_group'), signals, scoring)
         return signals
 
     def _dependency_record(self, kind: str, number: Optional[str]) -> Optional[Dict[str, Any]]:
@@ -135,11 +135,13 @@ class Orchestrator:
         except Exception:
             return False
 
-    def _store_signals(self, number: str, signals: Dict[str, Any],
+    def _store_signals(self, number: str, assignment_group: Optional[str],
+                       signals: Dict[str, Any],
                        scoring: Dict[str, Any]) -> None:
         row = {
             'incident_number': number,
             'computed_at': utc_now().replace(microsecond=0),
+            'assignment_group': assignment_group,
             'age_days': signals.get('age_days') or 0,
             'idle_days': signals.get('idle_days') or 0,
             'age_minutes': int(signals.get('age_minutes') or 0),

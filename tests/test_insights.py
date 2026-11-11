@@ -27,6 +27,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from core import charts
+from pipeline.rollup import DailyRollup
 from web import insights
 from web.insights import Insights, parse_range
 
@@ -80,6 +81,16 @@ class TestTimeRange:
         window = parse_range('custom', '2020-01-01', '2026-11-01', TODAY)
         assert (TODAY - window.start).days <= insights.MAX_RANGE_DAYS
 
+    def test_a_range_entirely_before_retention_is_clamped_to_a_valid_day(self):
+        window = parse_range('custom', '2020-01-01', '2020-02-01', TODAY)
+        assert window.start == window.end
+        assert window.start == TODAY - datetime.timedelta(
+            days=insights.MAX_RANGE_DAYS - 1)
+
+    def test_a_range_entirely_in_the_future_is_clamped_to_today(self):
+        window = parse_range('custom', '2027-01-01', '2027-02-01', TODAY)
+        assert window.start == window.end == TODAY
+
     @pytest.mark.parametrize('bad', ['not-a-date', '2026-13-45', '01/02/2026'])
     def test_an_unparseable_date_falls_back(self, bad):
         assert parse_range('custom', bad, '2026-10-15',
@@ -120,7 +131,10 @@ class RecordingDb:
 class Ctx:
     def __init__(self, db):
         self.db = db
-        self.settings = type('S', (), {'aged_after_days': 5})()
+        self.settings = type('S', (), {
+            'aged_after_days': 5,
+            'get': lambda self, key, default=None: default,
+        })()
 
 
 def build(section, groups=('Service Desk',), rows=None):
@@ -131,8 +145,13 @@ def build(section, groups=('Service Desk',), rows=None):
 
 
 def ticket_queries(db):
+    ticket_tables = (
+        'v_current_board', 'signal_daily', 'watched_ticket',
+        'recommendation_feedback', 'recommendation_kb', 'FROM recommendation',
+        'alert_log', 'digest_run',
+    )
     return [(sql, params) for sql, params in db.statements
-            if 'v_current_board' in sql or 'signal_daily' in sql]
+            if any(table in sql for table in ticket_tables)]
 
 
 class TestScopeIsEnforcedInSql:
@@ -177,6 +196,54 @@ class TestScopeIsEnforcedInSql:
         assert aliased
         assert 'b.assignment_group IN' in aliased[0]
 
+    def test_scoped_insights_scope_recommendation_and_delivery_metrics(self):
+        for section in ('quality', 'knowledge', 'health', 'summary'):
+            _data, db = build(section, groups=['Service Desk'])
+            relevant = ticket_queries(db)
+            assert relevant, section
+            assert all('Service Desk' in params for _sql, params in relevant), section
+
+    def test_health_account_count_is_filtered_to_visible_queues(self):
+        class AccountDb(RecordingDb):
+            def query(self, sql, params=None):
+                self.statements.append((' '.join(sql.split()), list(params or [])))
+                if 'FROM advisor_user' in sql:
+                    return [
+                        {'role': 'ADMIN', 'assignment_groups': ''},
+                        {'role': 'LEAD', 'assignment_groups': 'Service Desk, Other'},
+                        {'role': 'LEAD', 'assignment_groups': 'Other'},
+                        {'role': 'VIEWER', 'assignment_groups': None},
+                    ]
+                return []
+
+        engine = Insights(Ctx(AccountDb()), ['Service Desk'],
+                          parse_range('30d', None, None, TODAY))
+        data = engine.health()
+        tile = next(item for item in data['tiles']
+                    if item['label'] == 'Active accounts in scope')
+        assert tile['value'] == 2
+
+    def test_query_errors_mark_the_section_as_incomplete(self):
+        class Broken(RecordingDb):
+            def query(self, sql, params=None):
+                raise RuntimeError('database unavailable')
+
+        engine = Insights(Ctx(Broken()), ['Service Desk'],
+                          parse_range('30d', None, None, TODAY))
+        assert engine.build('quality')['failed'] is True
+
+    def test_historical_rollups_use_signal_queue_attribution(self):
+        # Backlog requests daily summaries; the rollup owns the historical
+        # assignment-group selection used to produce them.
+        rollup_db = RecordingDb()
+        rollup = DailyRollup(type('C', (), {'db': rollup_db})())
+        rollup._last_signal_of_day(TODAY)
+        assert 's.assignment_group' in rollup_db.statements[0][0]
+        rollup._flow(TODAY)
+        flow_sql = rollup_db.statements[1][0]
+        assert 'first_signal.assignment_group' in flow_sql
+        assert 'last_signal.assignment_group' in flow_sql
+
 
 # ---------------------------------------------------------------------------
 # every section builds
@@ -207,7 +274,9 @@ class TestEverySectionBuilds:
 
         engine = Insights(Ctx(Broken()), ['Service Desk'],
                           parse_range('30d', None, None, TODAY))
-        assert engine.build(section)['panels']
+        data = engine.build(section)
+        assert data['panels']
+        assert data['failed'] is True
 
     @pytest.mark.parametrize('section', insights.SECTION_KEYS)
     def test_every_panel_declares_a_width_the_css_knows(self, section):
@@ -384,6 +453,13 @@ class TestTheRoute:
         """Changing section must not silently snap the window back."""
         assert 'carried' in route_body and 'range=' in route_body
 
+    def test_range_controls_are_visible_and_period_semantics_are_explained(self):
+        template = (ROOT / 'web' / 'templates' / 'insights.html'
+                    ).read_text(encoding='utf-8')
+        assert '<!--<div class="range-presets"' not in template
+        assert 'name="range" value="custom"' in template
+        assert '{{ range_note }}' in template
+
     def test_it_is_scoped_from_the_account(self, route_body):
         assert 'narrow_scope(user, group)' in route_body
 
@@ -501,4 +577,3 @@ class TestNothingIsDrawnOutsideItsFrame:
         widths = [float(w) for w in
                   re.findall(r'<rect[^>]*\swidth="([\d.]+)"', svg)]
         assert widths and min(widths) > 0
-

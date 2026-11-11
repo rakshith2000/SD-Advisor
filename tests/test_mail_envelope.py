@@ -202,3 +202,7 @@ class TestRecordedForAudit:
     def test_the_column_width_is_respected(self):
         row = self.recorded(cc=[f'admin{i}@example.com' for i in range(40)])
         assert len(row['recipient']) <= 200
+
+    def test_queue_is_recorded_for_scoped_delivery_health(self):
+        assert self.recorded(assignment_group='Desktop Support')[
+            'assignment_group'] == 'Desktop Support'

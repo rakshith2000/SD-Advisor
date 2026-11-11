@@ -91,7 +91,10 @@ class DailyRollup:
     def _last_signal_of_day(self, day: datetime.date) -> List[Dict[str, Any]]:
         """One row per ticket: the final signal it carried that day."""
         return self.db.query("""
-            SELECT s.incident_number, w.assignment_group, w.assigned_to,
+            SELECT s.incident_number,
+                   COALESCE(NULLIF(s.assignment_group, ''), w.assignment_group)
+                       AS assignment_group,
+                   w.assigned_to,
                    s.age_days, s.idle_days, s.attention_score,
                    s.pending_action_owner, s.sla_breached, s.sla_pct_consumed,
                    s.caller_replied_unanswered, s.auto_close_candidate,
@@ -115,18 +118,51 @@ class DailyRollup:
         """
         yesterday = day - datetime.timedelta(days=1)
         rows = self.db.query("""
-            SELECT w.assignment_group,
-                   SUM(b.first_day = %s) AS newly_aged,
-                   SUM(b.last_day  = %s) AS departed
-              FROM (SELECT incident_number,
-                           DATE(MIN(computed_at)) AS first_day,
-                           DATE(MAX(computed_at)) AS last_day
-                      FROM ticket_signal
-                     GROUP BY incident_number) b
-              JOIN watched_ticket w ON w.incident_number = b.incident_number
-             WHERE b.first_day = %s OR b.last_day = %s
-             GROUP BY w.assignment_group
-        """, (day, yesterday, day, yesterday))
+            SELECT assignment_group, SUM(newly_aged) AS newly_aged,
+                   SUM(departed) AS departed
+              FROM (
+                    SELECT COALESCE(NULLIF(first_signal.assignment_group, ''),
+                                    w.assignment_group) AS assignment_group,
+                           COUNT(*) AS newly_aged, 0 AS departed
+                      FROM (
+                            SELECT incident_number,
+                                   MIN(computed_at) AS first_at,
+                                   DATE(MIN(computed_at)) AS first_day,
+                                   MAX(computed_at) AS last_at,
+                                   DATE(MAX(computed_at)) AS last_day
+                              FROM ticket_signal
+                             GROUP BY incident_number
+                           ) b
+                        JOIN ticket_signal first_signal
+                          ON first_signal.incident_number = b.incident_number
+                         AND first_signal.computed_at = b.first_at
+                        JOIN watched_ticket w
+                          ON w.incident_number = b.incident_number
+                     WHERE b.first_day = %s
+                     GROUP BY assignment_group
+                    UNION ALL
+                    SELECT COALESCE(NULLIF(last_signal.assignment_group, ''),
+                                    w.assignment_group) AS assignment_group,
+                           0 AS newly_aged, COUNT(*) AS departed
+                      FROM (
+                            SELECT incident_number,
+                                   MIN(computed_at) AS first_at,
+                                   DATE(MIN(computed_at)) AS first_day,
+                                   MAX(computed_at) AS last_at,
+                                   DATE(MAX(computed_at)) AS last_day
+                              FROM ticket_signal
+                             GROUP BY incident_number
+                           ) b
+                        JOIN ticket_signal last_signal
+                          ON last_signal.incident_number = b.incident_number
+                         AND last_signal.computed_at = b.last_at
+                        JOIN watched_ticket w
+                          ON w.incident_number = b.incident_number
+                     WHERE b.last_day = %s
+                     GROUP BY assignment_group
+                   ) flow
+             GROUP BY assignment_group
+        """, (day, yesterday))
 
         return {
             ((r['assignment_group'] or '').strip() or '(none)'): {

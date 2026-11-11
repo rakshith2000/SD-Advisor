@@ -646,6 +646,7 @@ mysql -u sd_advisor -p sd_advisor_db < db/migrations/006_generalise_team_wording
 mysql -u sd_advisor -p sd_advisor_db < db/migrations/007_admin_settings.sql
 mysql -u sd_advisor -p sd_advisor_db < db/migrations/008_kb_accuracy.sql
 mysql -u sd_advisor -p sd_advisor_db < db/migrations/009_insights_rollup.sql
+mysql -u sd_advisor -p sd_advisor_db < db/migrations/010_insights_scope.sql
 mysql -u sd_advisor -p sd_advisor_db < db/schema.sql     # recreates the view
 
 sudo systemctl start aged-ticket-advisor""",
@@ -657,7 +658,9 @@ g.p('008 adds recommendation_kb, which records which knowledge articles were put
     'front of the model and which it actually cited — the two halves of the knowledge '
     'accuracy figure. 009 adds signal_daily, the nightly rollup the Insights trend '
     'pages read from; without it those pages report that there is no history yet '
-    'rather than failing, and the first rows appear after the first overnight run.')
+    'rather than failing, and the first rows appear after the first overnight run. '
+    '010 stores the assignment group on signal snapshots and queue digest logs so '
+    'historical attribution and scoped service-health metrics remain correct.')
 g.table(['Change', 'Former name', 'Current name'], [
     ['ticket_signal column', 'ball_in_court', 'pending_action_owner'],
     ['ticket_signal column', 'p90_overrun', 'duration_overrun'],

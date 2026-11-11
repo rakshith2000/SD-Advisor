@@ -319,6 +319,7 @@ class Dispatcher:
                 run_type=run_type, audience='lead',
                 ticket_count=len(payload['tickets']),
                 new_count=payload['movement']['new_count'],
+                assignment_group=group,
             )
 
             sent += int(bool(delivered))
@@ -371,7 +372,8 @@ class Dispatcher:
 
             if self.mailer.send(to=[email], subject=subject, html_body=html,
                                 run_type='agent_digest', audience='agent',
-                                ticket_count=entry['ticket_count']):
+                                ticket_count=entry['ticket_count'],
+                                assignment_group=groups[0] if len(groups) == 1 else None):
                 sent += 1
 
         log.info('Agent digests: %d sent, %d skipped for want of an address', sent, skipped)
@@ -466,7 +468,8 @@ class Dispatcher:
             if self.mailer.send(to=audience['to'], cc=audience['cc'],
                                 subject=subject, html_body=html,
                                 run_type='risk_alert',
-                                audience='lead', ticket_count=len(mine)):
+                                audience='lead', ticket_count=len(mine),
+                                assignment_group=group):
                 sent += 1
                 delivered_alerts += len(mine)
                 results.append({'group': group, 'to': audience['to'],
