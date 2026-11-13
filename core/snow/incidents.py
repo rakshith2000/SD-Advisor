@@ -1,6 +1,7 @@
 """Incident, history and related-record reads."""
 
 import datetime
+import re
 from typing import Any, Dict, List, Optional, Sequence
 
 from core.logging_setup import get_logger
@@ -25,6 +26,11 @@ INCIDENT_FIELDS = ','.join([
 # 6 Resolved, 7 Closed, 8 Canceled.
 OPEN_STATES = '1,2,3'
 CLOSED_STATES = '6,7'
+
+IMAGE_CONTENT_TYPES = {
+    'image/avif', 'image/bmp', 'image/gif', 'image/jpeg',
+    'image/png', 'image/webp',
+}
 
 
 class IncidentReader:
@@ -198,6 +204,55 @@ class IncidentReader:
 
         history.sort(key=lambda e: e.get('update_time') or '')
         return history
+
+    def get_image_attachments(self, sys_id: str) -> List[Dict[str, str]]:
+        """Image attachments belonging to this incident, newest first."""
+        if not re.fullmatch(r'[0-9a-fA-F]{32}', sys_id or ''):
+            raise ValueError('sys_id must be a ServiceNow sys_id')
+
+        rows = self.client.get_all('sys_attachment', {
+            'sysparm_query': f'table_name=incident^table_sys_id={sys_id}',
+            'sysparm_fields': 'sys_id,file_name,content_type,sys_created_on,sys_created_by',
+            'sysparm_query_order': 'sys_created_on',
+        })
+
+        attachments = []
+        for row in rows:
+            attachment = self._image_attachment(row)
+            if attachment is not None:
+                attachments.append(attachment)
+        attachments.sort(key=lambda item: item['created_at'], reverse=True)
+        return attachments
+
+    def get_image_attachment(self, sys_id: str,
+                             attachment_id: str) -> Optional[Dict[str, str]]:
+        """Return one supported image only when it belongs to this incident."""
+        for value, name in ((sys_id, 'sys_id'), (attachment_id, 'attachment_id')):
+            if not re.fullmatch(r'[0-9a-fA-F]{32}', value or ''):
+                raise ValueError(f'{name} must be a ServiceNow sys_id')
+
+        rows = self.client.get('sys_attachment', {
+            'sysparm_query': (f'sys_id={attachment_id}^table_name=incident'
+                              f'^table_sys_id={sys_id}'),
+            'sysparm_fields': 'sys_id,file_name,content_type,sys_created_on,sys_created_by',
+            'sysparm_limit': 1,
+        })
+        return self._image_attachment(rows[0]) if rows else None
+
+    @staticmethod
+    def _image_attachment(row: Dict[str, Any]) -> Optional[Dict[str, str]]:
+        content_type = str(row.get('content_type') or '').split(';', 1)[0].strip().lower()
+        attachment_id = str(row.get('sys_id') or '').strip()
+        if (content_type not in IMAGE_CONTENT_TYPES
+                or not re.fullmatch(r'[0-9a-fA-F]{32}', attachment_id)):
+            return None
+        return {
+            'sys_id': attachment_id,
+            'file_name': str(row.get('file_name') or 'Image attachment'),
+            'content_type': content_type,
+            'created_at': str(row.get('sys_created_on') or ''),
+            'created_by': str(row.get('sys_created_by') or 'system'),
+        }
 
     # -- related records ---------------------------------------------------
 

@@ -725,6 +725,29 @@ input.narrow { min-width: 96px; }
   white-space: pre-wrap; overflow-wrap: anywhere;
 }
 
+.activity-images { margin-top: 14px; }
+.activity-images h3 {
+  margin: 0 0 9px; color: var(--text-secondary);
+  font-size: 12px; font-weight: 650;
+}
+.activity-image-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 10px;
+}
+.activity-image {
+  min-width: 0; overflow: hidden; border: 1px solid var(--grid);
+  border-radius: var(--radius-sm); background: var(--sunken);
+}
+.activity-image a { display: block; }
+.activity-image img {
+  display: block; width: 100%; height: 150px; object-fit: contain;
+  background: var(--surface-1);
+}
+.activity-image-caption {
+  display: flex; flex-direction: column; gap: 2px; padding: 7px 9px;
+  font-size: 11.5px; overflow-wrap: anywhere;
+}
+
 @media (max-width: 620px) {
   .activity-fields { grid-template-columns: 1fr; gap: 0; }
   .activity-fields dt { text-align: left; padding-top: 7px; }

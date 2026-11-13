@@ -102,6 +102,63 @@ class TestScopeIsAppliedEverywhere:
         assert 'assignment_group' not in r.client.last_query
 
 
+class TestImageAttachments:
+    def test_lists_only_supported_images_for_the_incident(self):
+        sys_id = 'a' * 32
+        image_id = 'b' * 32
+        rows = [
+            {'sys_id': image_id, 'file_name': 'screen.png',
+             'content_type': 'image/png', 'sys_created_on': '2026-09-22 10:00:00',
+             'sys_created_by': 'agent.one'},
+            {'sys_id': 'c' * 32, 'file_name': 'notes.pdf',
+             'content_type': 'application/pdf'},
+            {'sys_id': 'd' * 32, 'file_name': 'active.svg',
+             'content_type': 'image/svg+xml'},
+            {'sys_id': 'invalid', 'file_name': 'bad.jpg',
+             'content_type': 'image/jpeg'},
+        ]
+        r = reader(rows=rows)
+
+        assert r.get_image_attachments(sys_id) == [{
+            'sys_id': image_id,
+            'file_name': 'screen.png',
+            'content_type': 'image/png',
+            'created_at': '2026-09-22 10:00:00',
+            'created_by': 'agent.one',
+        }]
+        table, params = r.client.calls[-1]
+        assert table == 'sys_attachment'
+        assert params['sysparm_query'] == f'table_name=incident^table_sys_id={sys_id}'
+        assert params['sysparm_fields'] == (
+            'sys_id,file_name,content_type,sys_created_on,sys_created_by')
+
+    def test_rejects_an_invalid_incident_id(self):
+        with pytest.raises(ValueError, match='sys_id'):
+            reader().get_image_attachments('not-a-sys-id')
+
+    def test_attachment_lookup_is_bound_to_the_ticket_and_image_type(self):
+        sys_id = 'a' * 32
+        image_id = 'b' * 32
+        r = reader(rows=[{
+            'sys_id': image_id, 'file_name': 'screen.png',
+            'content_type': 'image/png',
+        }])
+
+        assert r.get_image_attachment(sys_id, image_id)['sys_id'] == image_id
+        table, params = r.client.calls[-1]
+        assert table == 'sys_attachment'
+        assert params['sysparm_query'] == (
+            f'sys_id={image_id}^table_name=incident^table_sys_id={sys_id}')
+        assert params['sysparm_limit'] == 1
+
+    def test_single_lookup_rejects_non_images(self):
+        r = reader(rows=[{
+            'sys_id': 'b' * 32, 'file_name': 'notes.pdf',
+            'content_type': 'application/pdf',
+        }])
+        assert r.get_image_attachment('a' * 32, 'b' * 32) is None
+
+
 class TestQueryShapes:
     def test_aged_open_uses_open_states(self):
         r = reader()

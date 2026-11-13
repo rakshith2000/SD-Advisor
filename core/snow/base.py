@@ -13,6 +13,7 @@ Improvements over the clients in the existing project:
 """
 
 import datetime
+import re
 from typing import Any, Dict, Iterator, List, Optional, Tuple
 
 import requests
@@ -202,6 +203,26 @@ class ServiceNowClient:
         for page in self._pages(table, params):
             for row in page:
                 yield row
+
+    def get_attachment_file(self, attachment_id: str) -> Tuple[bytes, str]:
+        """Download a ServiceNow attachment through the authenticated session."""
+        if not re.fullmatch(r'[0-9a-fA-F]{32}', attachment_id or ''):
+            raise ValueError('attachment_id must be a ServiceNow sys_id')
+
+        url = f'{self.base_url}/api/now/attachment/{attachment_id}/file'
+        try:
+            response = self.session.get(
+                url, timeout=self.timeout, verify=self.verify_tls,
+                headers={'Accept': '*/*'})
+        except requests.RequestException as exc:
+            raise ServiceNowError(f'attachment {attachment_id}: request failed - {exc}') from exc
+
+        if response.status_code >= 400:
+            raise ServiceNowError(
+                f'attachment {attachment_id}: HTTP {response.status_code}')
+
+        content_type = response.headers.get('Content-Type', '')
+        return response.content, content_type.split(';', 1)[0].strip().lower()
 
     # -- helpers -----------------------------------------------------------
 

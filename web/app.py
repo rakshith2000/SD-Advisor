@@ -25,6 +25,7 @@ from core import admin_settings
 from core.admin_settings import SECTIONS, SettingError
 from core.context import get_context
 from core.logging_setup import get_logger
+from core.snow.base import ServiceNowError
 from core.timeutil import (DEFAULT_DATETIME_FORMAT, DEFAULT_DISPLAY_TZ,
                           format_dt, timezone_choices, utc_now,
                           zone_abbreviation, zone_label)
@@ -913,6 +914,15 @@ def create_app(config_path: Optional[str] = None) -> FastAPI:
         except Exception:
             log.debug('Could not load live history for %s', number)
 
+        image_attachments = []
+        image_attachments_error = False
+        try:
+            if ticket.get('sys_id'):
+                image_attachments = ctx.incidents.get_image_attachments(ticket['sys_id'])
+        except ServiceNowError:
+            log.exception('Could not load image attachments for %s', number)
+            image_attachments_error = True
+
         snooze = ctx.db.query_one(
             'SELECT * FROM suppression WHERE incident_number = %s', (number,))
 
@@ -934,8 +944,42 @@ def create_app(config_path: Optional[str] = None) -> FastAPI:
                       evidence=evidence, feedback=feedback,
                       knowledge=knowledge,
                       activity=group_activity(timeline), snooze=snooze,
+                      image_attachments=image_attachments,
+                      image_attachments_error=image_attachments_error,
                       kb_rated=bool(request.query_params.get('kb_rated')),
                       snow_url=str(ctx.settings.get('servicenow.url', '')).rstrip('/'))
+
+    @app.get('/ticket/{number}/attachments/{attachment_id}')
+    def ticket_image_attachment(number: str, attachment_id: str,
+                                user: Dict[str, Any] = Depends(require_user)):
+        fetch_in_scope(user, number)
+        ticket = ctx.db.query_one(
+            'SELECT sys_id FROM watched_ticket WHERE incident_number = %s', (number,))
+        if not ticket or not ticket.get('sys_id'):
+            raise HTTPException(status_code=404, detail='Attachment not found')
+
+        try:
+            attachment = ctx.incidents.get_image_attachment(
+                ticket['sys_id'], attachment_id)
+            if not attachment:
+                raise HTTPException(status_code=404, detail='Attachment not found')
+            content, downloaded_type = ctx.snow.get_attachment_file(attachment_id)
+        except ServiceNowError as exc:
+            log.exception('Could not load image attachment %s for %s',
+                          attachment_id, number)
+            raise HTTPException(
+                status_code=502, detail='Could not load image from ServiceNow') from exc
+
+        if downloaded_type and downloaded_type not in ('application/octet-stream',
+                                                        attachment['content_type']):
+            log.error('ServiceNow returned unexpected content type %r for attachment %s',
+                      downloaded_type, attachment_id)
+            raise HTTPException(status_code=502, detail='Unexpected image type from ServiceNow')
+
+        return Response(
+            content=content, media_type=attachment['content_type'],
+            headers={'X-Content-Type-Options': 'nosniff',
+                     'Cache-Control': 'private, max-age=300'})
 
     # -----------------------------------------------------------------
     # actions

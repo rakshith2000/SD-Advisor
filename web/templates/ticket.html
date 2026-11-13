@@ -237,8 +237,13 @@
           audit row for every column, so creating an incident arrives here as
           a dozen events sharing a timestamp. Grouped in web.activity.
         #}
-        {% if activity %}
+        {% if activity or image_attachments or image_attachments_error %}
         <div class="activity">
+          {% if image_attachments_error %}
+          <p class="banner" role="status">
+            Image attachments could not be loaded from ServiceNow.
+          </p>
+          {% endif %}
           {% for entry in activity %}
           <article class="activity-card is-{{ entry.kind }}">
             <header class="activity-head">
@@ -277,6 +282,31 @@
             {% endif %}
           </article>
           {% endfor %}
+
+          {% if image_attachments %}
+          <section class="activity-images" aria-label="Image attachments">
+            <h3>Image attachments</h3>
+            <div class="activity-image-grid">
+              {% for image in image_attachments %}
+              <article class="activity-image">
+                <a href="/ticket/{{ row.incident_number }}/attachments/{{ image.sys_id }}"
+                   target="_blank" rel="noopener">
+                  <img src="/ticket/{{ row.incident_number }}/attachments/{{ image.sys_id }}"
+                       alt="{{ image.file_name }}" loading="lazy" decoding="async">
+                </a>
+                <div class="activity-image-caption">
+                  <strong>{{ image.file_name }}</strong>
+                  {% if image.created_at %}
+                  <span class="subtle tnum">
+                    {{ image.created_at | localdt('%Y-%m-%d %H:%M', with_zone=True) }}
+                  </span>
+                  {% endif %}
+                </div>
+              </article>
+              {% endfor %}
+            </div>
+          </section>
+          {% endif %}
         </div>
         {% else %}
         <p class="subtle">No activity could be loaded from ServiceNow.</p>

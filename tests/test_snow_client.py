@@ -199,6 +199,38 @@ class TestSinglePageGet:
         session = FakeSession(50)
         assert len(client(session).get('incident', {'sysparm_limit': 200})) == 50
 
+
+class TestAttachmentDownload:
+    def test_downloads_through_the_authenticated_service_session(self):
+        class DownloadResponse:
+            status_code = 200
+            headers = {'Content-Type': 'image/png; charset=binary'}
+            content = b'png bytes'
+
+        class DownloadSession:
+            def __init__(self):
+                self.request = None
+
+            def get(self, *args, **kwargs):
+                self.request = (args, kwargs)
+                return DownloadResponse()
+
+        session = DownloadSession()
+        content, content_type = client(session).get_attachment_file('a' * 32)
+
+        assert content == b'png bytes'
+        assert content_type == 'image/png'
+        args, kwargs = session.request
+        assert args[0] == (
+            'https://example.service-now.com/api/now/attachment/' + 'a' * 32 + '/file')
+        assert kwargs['headers'] == {'Accept': '*/*'}
+
+    def test_rejects_an_invalid_attachment_id(self):
+        session = FakeSession(0)
+        with pytest.raises(ValueError, match='attachment_id'):
+            client(session).get_attachment_file('not-a-sys-id')
+        assert session.requests == []
+
     def test_http_error_raises(self):
         class Failing(FakeSession):
             def get(self, *a, **k):
