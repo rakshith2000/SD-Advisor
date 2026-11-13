@@ -158,6 +158,26 @@ class TestImageAttachments:
         }])
         assert r.get_image_attachment('a' * 32, 'b' * 32) is None
 
+    def test_handles_display_value_all_metadata(self):
+        sys_id = 'a' * 32
+        image_id = 'b' * 32
+        r = reader(rows=[{
+            'sys_id': image_id,
+            'file_name': {'display_value': 'screen.png', 'value': 'screen.png'},
+            'content_type': {'display_value': 'image/png', 'value': 'image/png'},
+            'sys_created_on': {'display_value': '11/13/2026 10:30:00',
+                               'value': '2026-11-13 16:30:00'},
+            'sys_created_by': {'display_value': 'agent.one', 'value': 'agent.user'},
+        }])
+
+        assert r.get_image_attachments(sys_id) == [{
+            'sys_id': image_id,
+            'file_name': 'screen.png',
+            'content_type': 'image/png',
+            'created_at': '2026-11-13 16:30:00',
+            'created_by': 'agent.one',
+        }]
+
 
 class TestQueryShapes:
     def test_aged_open_uses_open_states(self):

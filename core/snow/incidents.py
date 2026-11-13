@@ -242,18 +242,28 @@ class IncidentReader:
 
     @staticmethod
     def _image_attachment(row: Dict[str, Any]) -> Optional[Dict[str, str]]:
-        content_type = str(row.get('content_type') or '').split(';', 1)[0].strip().lower()
-        attachment_id = str(row.get('sys_id') or '').strip()
+        content_type = IncidentReader._attachment_field(row.get('content_type'))
+        content_type = content_type.split(';', 1)[0].strip().lower()
+        attachment_id = IncidentReader._attachment_field(row.get('sys_id'))
         if (content_type not in IMAGE_CONTENT_TYPES
                 or not re.fullmatch(r'[0-9a-fA-F]{32}', attachment_id)):
             return None
         return {
             'sys_id': attachment_id,
-            'file_name': str(row.get('file_name') or 'Image attachment'),
+            'file_name': (IncidentReader._attachment_field(row.get('file_name'))
+                          or 'Image attachment'),
             'content_type': content_type,
             'created_at': utc_value(row.get('sys_created_on')),
-            'created_by': str(row.get('sys_created_by') or 'system'),
+            'created_by': (IncidentReader._attachment_field(row.get('sys_created_by'))
+                           or 'system'),
         }
+
+    @staticmethod
+    def _attachment_field(value: Any) -> str:
+        """Flatten scalar or display_value=all attachment metadata."""
+        if isinstance(value, dict):
+            value = value.get('display_value') or value.get('value') or ''
+        return str(value or '').strip()
 
     # -- related records ---------------------------------------------------
 
