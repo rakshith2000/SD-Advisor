@@ -25,6 +25,8 @@ the page is rendered.
 import re
 from typing import Any, Dict, List, Optional, Sequence
 
+from core.timeutil import parse_ts
+
 CARD_FIELD_CHANGES = 'field_changes'
 CARD_COMMENT = 'comment'
 CARD_WORK_NOTE = 'work_note'
@@ -226,3 +228,27 @@ def group_activity(timeline: Sequence[Dict[str, Any]],
 
     groups.reverse()
     return groups[:limit] if limit else groups
+
+
+def merge_image_attachments(activity: Sequence[Dict[str, Any]],
+                            attachments: Sequence[Dict[str, Any]],
+                            limit: int = 60) -> List[Dict[str, Any]]:
+    """Place image attachments in the activity stream by their creation time."""
+    entries = list(activity)
+    for image in attachments:
+        actor = image.get('created_by') or 'system'
+        entries.append({
+            'kind': 'image_attachment',
+            'label': 'Image attachment',
+            'when': image.get('created_at') or '',
+            'actor': actor,
+            'initials': initials(actor),
+            'image': image,
+        })
+
+    def sort_key(entry: Dict[str, Any]):
+        timestamp = parse_ts(entry.get('when'))
+        return (timestamp is not None, timestamp, str(entry.get('when') or ''))
+
+    entries.sort(key=sort_key, reverse=True)
+    return entries[:limit] if limit else entries

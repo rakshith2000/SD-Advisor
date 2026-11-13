@@ -29,7 +29,7 @@ from pipeline.signals import (AGENT_ACTION_FIELDS, DISPLAY_ONLY_FIELDS,
 from web.activity import (CARD_COMMENT, CARD_FIELD_CHANGES, CARD_WORK_NOTE,
                           COMMENT_FIELDS, FIELD_LABELS, HIDDEN_FIELDS,
                           WORK_NOTE_FIELDS, card_kind, field_label,
-                          group_activity, initials)
+                          group_activity, initials, merge_image_attachments)
 
 SYSTEM_ACCOUNTS = ['system', 'guest', 'cac.rest']
 CALLER = 'Emily Nuxoll'
@@ -178,6 +178,41 @@ class TestGrouping:
             build_timeline(creation_history(), CALLER, SYSTEM_ACCOUNTS), limit=1)
         assert len(cards) == 1
         assert len(cards[0]['changes']) == 12
+
+
+class TestImageAttachmentOrdering:
+    def test_images_are_interleaved_by_creation_time(self):
+        events = [
+            {'kind': CARD_COMMENT, 'when': '2026-09-22 09:42:59',
+             'actor': CALLER},
+            {'kind': CARD_FIELD_CHANGES, 'when': '2026-09-22 09:18:45',
+             'actor': CALLER},
+        ]
+        attachments = [{
+            'sys_id': 'a' * 32,
+            'file_name': 'screenshot.png',
+            'created_at': '2026-09-22 09:30:00',
+            'created_by': AGENT,
+        }]
+
+        result = merge_image_attachments(events, attachments)
+
+        assert [entry['kind'] for entry in result] == [
+            CARD_COMMENT, 'image_attachment', CARD_FIELD_CHANGES]
+        assert result[1]['actor'] == AGENT
+        assert result[1]['image'] == attachments[0]
+
+    def test_attachment_uses_its_timestamp_for_ordering_and_limit(self):
+        events = [
+            {'kind': CARD_COMMENT, 'when': '2026-09-22 09:42:59',
+             'actor': CALLER},
+        ]
+        attachments = [{
+            'sys_id': 'a' * 32, 'created_at': '2026-09-22 09:50:00',
+            'created_by': AGENT,
+        }]
+        result = merge_image_attachments(events, attachments, limit=1)
+        assert [entry['kind'] for entry in result] == ['image_attachment']
 
 
 # ---------------------------------------------------------------------------

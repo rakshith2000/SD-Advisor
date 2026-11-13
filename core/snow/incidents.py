@@ -213,7 +213,7 @@ class IncidentReader:
         rows = self.client.get_all('sys_attachment', {
             'sysparm_query': f'table_name=incident^table_sys_id={sys_id}',
             'sysparm_fields': 'sys_id,file_name,content_type,sys_created_on,sys_created_by',
-            'sysparm_query_order': 'sys_created_on',
+            'sysparm_display_value': DISPLAY_AND_VALUE,
         })
 
         attachments = []
@@ -235,6 +235,7 @@ class IncidentReader:
             'sysparm_query': (f'sys_id={attachment_id}^table_name=incident'
                               f'^table_sys_id={sys_id}'),
             'sysparm_fields': 'sys_id,file_name,content_type,sys_created_on,sys_created_by',
+            'sysparm_display_value': DISPLAY_AND_VALUE,
             'sysparm_limit': 1,
         })
         return self._image_attachment(rows[0]) if rows else None
@@ -250,7 +251,7 @@ class IncidentReader:
             'sys_id': attachment_id,
             'file_name': str(row.get('file_name') or 'Image attachment'),
             'content_type': content_type,
-            'created_at': str(row.get('sys_created_on') or ''),
+            'created_at': utc_value(row.get('sys_created_on')),
             'created_by': str(row.get('sys_created_by') or 'system'),
         }
 

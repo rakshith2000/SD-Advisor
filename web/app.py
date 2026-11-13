@@ -38,7 +38,7 @@ from web import auth
 from web.access import (ALREADY_DECIDED, NOT_FOUND, REFUSED,
                         AccessRequestError, RoleRequestService)
 from web import exporting, insights
-from web.activity import group_activity
+from web.activity import group_activity, merge_image_attachments
 from web.auth import (SessionManager, UserStore, require_admin, require_lead,
                       require_user, require_write, safe_next)
 from web.oidc import ID_TOKEN_COOKIE, STATE_COOKIE, OIDCError, OIDCProvider
@@ -943,7 +943,9 @@ def create_app(config_path: Optional[str] = None) -> FastAPI:
                       breakdown=breakdown, recommendation=recommendation,
                       evidence=evidence, feedback=feedback,
                       knowledge=knowledge,
-                      activity=group_activity(timeline), snooze=snooze,
+                      activity=merge_image_attachments(
+                          group_activity(timeline, limit=0), image_attachments),
+                      snooze=snooze,
                       image_attachments=image_attachments,
                       image_attachments_error=image_attachments_error,
                       kb_rated=bool(request.query_params.get('kb_rated')),

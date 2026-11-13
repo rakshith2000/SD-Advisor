@@ -277,40 +277,44 @@
               </dd>
               {% endfor %}
             </dl>
+            {% elif entry.kind == 'image_attachment' %}
+            <div class="activity-attachment">
+              <button class="activity-image-button" type="button"
+                      data-image-url="/ticket/{{ row.incident_number }}/attachments/{{ entry.image.sys_id }}"
+                      data-image-name="{{ entry.image.file_name }}"
+                      aria-label="View image: {{ entry.image.file_name }}">
+                <img src="/ticket/{{ row.incident_number }}/attachments/{{ entry.image.sys_id }}"
+                     alt="{{ entry.image.file_name }}" loading="lazy" decoding="async">
+              </button>
+              <span class="activity-image-name">{{ entry.image.file_name }}</span>
+            </div>
             {% else %}
             <div class="activity-text">{{ entry.text | activity_html }}</div>
             {% endif %}
           </article>
           {% endfor %}
 
-          {% if image_attachments %}
-          <section class="activity-images" aria-label="Image attachments">
-            <h3>Image attachments</h3>
-            <div class="activity-image-grid">
-              {% for image in image_attachments %}
-              <article class="activity-image">
-                <a href="/ticket/{{ row.incident_number }}/attachments/{{ image.sys_id }}"
-                   target="_blank" rel="noopener">
-                  <img src="/ticket/{{ row.incident_number }}/attachments/{{ image.sys_id }}"
-                       alt="{{ image.file_name }}" loading="lazy" decoding="async">
-                </a>
-                <div class="activity-image-caption">
-                  <strong>{{ image.file_name }}</strong>
-                  {% if image.created_at %}
-                  <span class="subtle tnum">
-                    {{ image.created_at | localdt('%Y-%m-%d %H:%M', with_zone=True) }}
-                  </span>
-                  {% endif %}
-                </div>
-              </article>
-              {% endfor %}
-            </div>
-          </section>
-          {% endif %}
         </div>
         {% else %}
         <p class="subtle">No activity could be loaded from ServiceNow.</p>
         {% endif %}
+        <dialog class="activity-image-modal" id="activity-image-modal"
+                aria-label="Image attachment viewer">
+          <div class="activity-image-modal-head">
+            <strong id="activity-image-modal-name"></strong>
+            <div class="activity-image-controls">
+              <button type="button" class="btn small" data-image-zoom="-1"
+                      aria-label="Zoom out">−</button>
+              <button type="button" class="btn small" data-image-zoom="reset">Fit</button>
+              <button type="button" class="btn small" data-image-zoom="1"
+                      aria-label="Zoom in">+</button>
+              <button type="button" class="btn small" data-image-close>Close</button>
+            </div>
+          </div>
+          <div class="activity-image-stage">
+            <img id="activity-image-modal-image" alt="">
+          </div>
+        </dialog>
       </div>
     </div>
 
@@ -476,5 +480,60 @@
 
   </div>
 </div>
+
+<script>
+  (function () {
+    var dialog = document.getElementById('activity-image-modal');
+    var image = document.getElementById('activity-image-modal-image');
+    var name = document.getElementById('activity-image-modal-name');
+    if (!dialog || !image || !name) { return; }
+
+    var zoom = 1;
+    var fitScale = 1;
+
+    function sizeImage() {
+      if (!image.naturalWidth || !image.naturalHeight) { return; }
+      var maxWidth = Math.min(window.innerWidth * 0.82, 1200);
+      var maxHeight = window.innerHeight * 0.72;
+      fitScale = Math.min(1, maxWidth / image.naturalWidth,
+                          maxHeight / image.naturalHeight);
+      image.style.width = Math.round(image.naturalWidth * fitScale * zoom) + 'px';
+      image.style.height = Math.round(image.naturalHeight * fitScale * zoom) + 'px';
+    }
+
+    document.querySelectorAll('.activity-image-button').forEach(function (button) {
+      button.addEventListener('click', function () {
+        zoom = 1;
+        image.alt = button.dataset.imageName || '';
+        name.textContent = button.dataset.imageName || '';
+        image.onload = sizeImage;
+        image.src = button.dataset.imageUrl;
+        if (image.complete) { sizeImage(); }
+        dialog.showModal();
+      });
+    });
+
+    dialog.querySelectorAll('[data-image-zoom]').forEach(function (button) {
+      button.addEventListener('click', function () {
+        if (button.dataset.imageZoom === 'reset') {
+          zoom = 1;
+        } else {
+          zoom = Math.max(0.25, Math.min(5, zoom + Number(button.dataset.imageZoom) * 0.25));
+        }
+        sizeImage();
+      });
+    });
+
+    dialog.querySelector('[data-image-close]').addEventListener('click', function () {
+      dialog.close();
+    });
+    dialog.addEventListener('click', function (event) {
+      if (event.target === dialog) { dialog.close(); }
+    });
+    window.addEventListener('resize', function () {
+      if (dialog.open) { sizeImage(); }
+    });
+  })();
+</script>
 
 {% endblock %}

@@ -725,27 +725,37 @@ input.narrow { min-width: 96px; }
   white-space: pre-wrap; overflow-wrap: anywhere;
 }
 
-.activity-images { margin-top: 14px; }
-.activity-images h3 {
-  margin: 0 0 9px; color: var(--text-secondary);
-  font-size: 12px; font-weight: 650;
+.activity-card.is-image_attachment { border-left-color: var(--accent); }
+.activity-attachment { display: flex; flex-direction: column; gap: 6px; }
+.activity-image-button {
+  display: block; width: min(100%, 360px); height: 240px; padding: 0;
+  overflow: hidden; border: 1px solid var(--grid); border-radius: var(--radius-sm);
+  background: var(--sunken); cursor: zoom-in;
 }
-.activity-image-grid {
-  display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
-  gap: 10px;
+.activity-image-button img {
+  display: block; width: 100%; height: 100%; object-fit: contain;
 }
-.activity-image {
-  min-width: 0; overflow: hidden; border: 1px solid var(--grid);
-  border-radius: var(--radius-sm); background: var(--sunken);
+.activity-image-name {
+  max-width: 360px; color: var(--text-secondary); font-size: 11.5px;
+  overflow-wrap: anywhere;
 }
-.activity-image a { display: block; }
-.activity-image img {
-  display: block; width: 100%; height: 150px; object-fit: contain;
-  background: var(--surface-1);
+.activity-image-modal {
+  width: min(92vw, 1280px); max-width: none; max-height: 92vh; padding: 14px;
+  overflow: hidden; color: var(--text-primary); background: var(--surface-1);
+  border: 1px solid var(--grid); border-radius: var(--radius);
 }
-.activity-image-caption {
-  display: flex; flex-direction: column; gap: 2px; padding: 7px 9px;
-  font-size: 11.5px; overflow-wrap: anywhere;
+.activity-image-modal::backdrop { background: rgb(0 0 0 / 78%); }
+.activity-image-modal-head {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; margin-bottom: 10px; overflow-wrap: anywhere;
+}
+.activity-image-controls { display: flex; flex: none; gap: 6px; }
+.activity-image-stage {
+  max-height: calc(92vh - 76px); overflow: auto; text-align: center;
+  background: var(--sunken); border-radius: var(--radius-sm);
+}
+.activity-image-stage img {
+  display: block; max-width: none; max-height: none; margin: 0 auto;
 }
 
 @media (max-width: 620px) {
